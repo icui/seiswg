@@ -19,13 +19,19 @@ use crate::config::Config;
 // ──────────────────────────────────────────────────────────────────────────
 const N_FIELDS: usize = 44;
 
-const F_VY: usize = 0;
-// const F_UY: usize = 1;
+// These WGSL field IDs are used by GPU kernels; not all are referenced directly in Rust.
+#[allow(dead_code)]
+const F_VY:      usize = 0;
+#[allow(dead_code)]
+const F_UY:      usize = 1;
 // const F_SXY: usize = 2;
 // const F_SZY: usize = 3;
-// const F_DSY: usize = 4;
-// const F_DVYDX: usize = 5;
-// const F_DVYDZ: usize = 6;
+#[allow(dead_code)]
+const F_DSY:     usize = 4;
+#[allow(dead_code)]
+const F_DVYDX:   usize = 5;
+#[allow(dead_code)]
+const F_DVYDZ:   usize = 6;
 // const F_VX: usize = 7;
 // const F_VZ: usize = 8;
 // const F_UX: usize = 9;
@@ -40,17 +46,36 @@ const F_VY: usize = 0;
 // const F_DVZDX: usize = 18;
 // const F_DVZDZ: usize = 19;
 // spin fields 20-29
+#[allow(dead_code)]
+const F_DVYDX_C: usize = 26;  // reused as fw-wavefield grad-x during adjoint
+#[allow(dead_code)]
+const F_DVYDZ_C: usize = 27;  // reused as fw-wavefield grad-z during adjoint
 // model fields
+#[allow(dead_code)]
 const F_LAM: usize = 30;
-const F_MU: usize = 31;
-const F_NU: usize = 32;
-const F_J: usize = 33;
+#[allow(dead_code)]
+const F_MU:  usize = 31;
+#[allow(dead_code)]
+const F_NU:  usize = 32;
+#[allow(dead_code)]
+const F_J:   usize = 33;
+#[allow(dead_code)]
 const F_LAM_C: usize = 34;
-const F_MU_C: usize = 35;
-const F_NU_C: usize = 36;
-const F_RHO: usize = 37;
+#[allow(dead_code)]
+const F_MU_C:  usize = 35;
+#[allow(dead_code)]
+const F_NU_C:  usize = 36;
+#[allow(dead_code)]
+const F_RHO:   usize = 37;
 // const F_BOUND: usize = 38;
-// adjoint fields 39-43
+// adjoint fields
+// const F_K_LAM: usize = 39;
+#[allow(dead_code)]
+const F_K_MU:  usize = 40;
+// const F_K_RHO: usize = 41;
+#[allow(dead_code)]
+const F_GSUM:  usize = 42;
+// const F_GTMP: usize = 43;
 
 // Dynamic fields to zero between sources (indices 0-29).
 const N_DYN_FIELDS: usize = 30;
@@ -136,6 +161,11 @@ struct Pipelines {
     // Gaussian smoothing
     gaussian_x:    wgpu::ComputePipeline,
     gaussian_z:    wgpu::ComputePipeline,
+    // Adjoint-specific helpers
+    adj_dsy:       wgpu::ComputePipeline,
+    div_uy:        wgpu::ComputePipeline,
+    div_fw:        wgpu::ComputePipeline,
+    init_gsum:     wgpu::ComputePipeline,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -192,7 +222,10 @@ fn load_text_table(path: &Path) -> Result<Vec<Vec<f64>>> {
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let rows: Vec<Vec<f64>> = text
         .lines()
-        .filter(|l| !l.trim().is_empty())
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        })
         .map(|l| {
             l.split_whitespace()
                 .map(|tok| tok.parse::<f64>().unwrap_or(0.0))
@@ -254,6 +287,74 @@ fn write_raw_f32(path: &Path, data: &[f32]) -> Result<()> {
     Ok(())
 }
 
+/// Read a NumPy v1 .npy file containing a 2-D f32 array.
+/// Returns the data as a flat Vec<f32>.
+fn load_npy_f32(path: &Path) -> Result<Vec<f32>> {
+    let bytes = fs::read(path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    // .npy magic: \x93NUMPY (6 bytes), version (2 bytes), header_len as u16 LE (2 bytes)
+    if bytes.len() < 10 || &bytes[..6] != b"\x93NUMPY" {
+        anyhow::bail!("Not a NumPy file: {}", path.display());
+    }
+    let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+    let data_start = 10 + header_len;
+    if bytes.len() < data_start {
+        anyhow::bail!("Truncated .npy header in {}", path.display());
+    }
+    let payload = &bytes[data_start..];
+    if payload.len() % 4 != 0 {
+        anyhow::bail!("Payload length not a multiple of 4 in {}", path.display());
+    }
+    let floats: Vec<f32> = payload
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    Ok(floats)
+}
+
+/// Compute waveform misfit and adjoint source-time-function.
+///
+/// `syn`  – synthetic traces, flat [nrec * nt] layout syn[ir*nt + it]
+/// `obs`  – observed  traces, same layout
+/// Returns (misfit, adstf) where adstf is laid out the same way
+/// **but time-reversed**: adstf[ir*nt + (nt-1-it)] = 2*(syn-obs)*taper.
+fn compute_waveform_misfit(
+    syn: &[f32],
+    obs: &[f32],
+    nrec: usize,
+    nt:   usize,
+    dt:   f32,
+) -> (f64, Vec<f32>) {
+    let mut adstf  = vec![0.0f32; nrec * nt];
+    let mut misfit = 0.0f64;
+
+    let t_end       = (nt - 1) as f32 * dt;
+    let taper_width = t_end / 10.0;
+    let t_min       = taper_width;
+    let t_max       = t_end - taper_width;
+
+    for ir in 0..nrec {
+        for it in 0..nt {
+            let kt  = ir * nt + it;
+            let akt = ir * nt + (nt - 1 - it); // time-reversed index
+
+            let t = it as f32 * dt;
+            let taper = if t <= t_min {
+                0.5 + 0.5 * ((std::f32::consts::PI * (t_min - t) / taper_width).cos())
+            } else if t >= t_max {
+                0.5 + 0.5 * ((std::f32::consts::PI * (t_max - t) / taper_width).cos())
+            } else {
+                1.0
+            };
+
+            let diff = (syn[kt] - obs[kt]) * taper;
+            misfit  += (diff as f64).powi(2);
+            adstf[akt] = diff * taper * 2.0;
+        }
+    }
+    (misfit.sqrt(), adstf)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Pipeline builder helpers
 // ──────────────────────────────────────────────────────────────────────────
@@ -306,6 +407,10 @@ fn make_all_pipelines(
         interaction_muy: p("interaction_muy"),
         gaussian_x:      p("gaussian_x"),
         gaussian_z:      p("gaussian_z"),
+        adj_dsy:         p("adj_dsy"),
+        div_uy:          p("div_uy"),
+        div_fw:          p("div_fw"),
+        init_gsum:       p("init_gsum"),
     }
 }
 
@@ -957,5 +1062,326 @@ impl Solver {
     fn slice_obs(obs: &[f32], comp: usize, nrec: usize, nt: usize) -> Vec<f32> {
         let stride = nrec * nt;
         obs[comp * stride..(comp + 1) * stride].to_vec()
+    }
+
+    /// Write Params struct to the GPU uniform buffer.
+    fn write_params(&self, p: &Params) {
+        let params_size = std::mem::size_of::<Params>() as u64;
+        let buf_size = ((params_size + 255) / 256 * 256) as usize;
+        let mut buf = vec![0u8; buf_size];
+        buf[..params_size as usize].copy_from_slice(bytemuck::bytes_of(p));
+        self.queue.write_buffer(&self.params_buf, 0, &buf);
+    }
+
+    /// Download one field slice (fid) from the GPU fields buffer to a Vec<f32>.
+    fn readback_field(&self, fid: usize) -> Result<Vec<f32>> {
+        let npt = self.npt as usize;
+        let offset = (fid * npt * 4) as u64;
+        let size   = (npt * 4) as u64;
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label:              Some("field_stage"),
+            size,
+            usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("field_copy") });
+        enc.copy_buffer_to_buffer(&self.fields_buf, offset, &staging, 0, size);
+        self.queue.submit([enc.finish()]);
+        self.device.poll(wgpu::Maintain::Wait);
+
+        let slice = staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::Maintain::Wait);
+        let data = slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        Ok(result)
+    }
+
+    /// Upload a Vec<f32> into one field slice (fid) of the GPU fields buffer.
+    fn write_field_slice(&self, fid: usize, data: &[f32]) -> Result<()> {
+        let npt = self.npt as usize;
+        let offset = (fid * npt * 4) as u64;
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        self.queue.write_buffer(&self.fields_buf, offset, bytes);
+        Ok(())
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Run adjoint simulation
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Run adjoint gradient computation.
+    ///
+    /// If `combine_sources = no` (default for adjoint):
+    ///   Loops over each source independently, accumulating k_µ across all.
+    ///   Each source's forward traces are compared against the corresponding
+    ///   observed trace file `uy_{isrc:06}.npy`.
+    ///
+    /// If `combine_sources = yes`:
+    ///   All sources fire simultaneously; compares against `uy_000000.npy`.
+    ///
+    /// Steps per source:
+    ///   1. Forward pass (single source), save displacement checkpoints.
+    ///   2. Waveform misfit + adjoint STF.
+    ///   3. Adjoint time loop, accumulating ∂J/∂µ.
+    ///
+    /// After all sources:
+    ///   4. Gaussian smoothing.
+    ///   5. Save gradient as `output/proc000000_kmu.bin`.
+    pub fn run_adjoint(&mut self) -> Result<()> {
+        let sh   = self.config.solver.sh;
+        let nt   = self.params.nt;
+        let nrec = self.params.nrec;
+        let npt  = self.npt;
+        let nsrc = self.sources.len() as u32;
+        let dt   = self.params.dt;
+        let adj_interval = self.config.solver.adj_interval;
+        let smooth_sigma = self.config.solver.smooth;
+        let combine      = self.config.solver.combine_sources;
+
+        // nsa: number of displacement checkpoints saved
+        let nsa = nt / adj_interval;
+        if nsa == 0 {
+            anyhow::bail!("adj_interval ({}) >= nt ({})", adj_interval, nt);
+        }
+
+        let out_dir = self.config.paths.output.clone();
+        std::fs::create_dir_all(&out_dir)?;
+
+        // ── Load observed (reference) traces ─────────────────────────────
+        let obs_dir = self.config.paths.traces.clone()
+            .ok_or_else(|| anyhow::anyhow!(
+                "config [path] traces is required for the adjoint workflow"))?;
+
+        // Helper: load the reference trace for source index i.
+        // combine=yes → always loads uy_000000; combine=no → uy_{i:06}.
+        let load_ref_y = |i: usize| -> Result<Vec<f32>> {
+            if sh {
+                let fname = if combine {
+                    format!("uy_{:06}.npy", 0)
+                } else {
+                    format!("uy_{:06}.npy", i)
+                };
+                let p = obs_dir.join(&fname);
+                load_npy_f32(&p)
+                    .with_context(|| format!("Cannot load observed traces {}", p.display()))
+            } else {
+                Ok(vec![])
+            }
+        };
+
+        // ── Clear k_mu accumulator before source loop ─────────────────────
+        {
+            let kmu_off = (F_K_MU * npt as usize * 4) as u64;
+            let kmu_len = (npt as usize * 4) as u64;
+            let mut enc = self.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("clr_kmu") });
+            enc.clear_buffer(&self.fields_buf, kmu_off, Some(kmu_len));
+            self.queue.submit([enc.finish()]);
+        }
+
+        // Source indices to iterate over
+        let src_runs: Vec<(i32, usize)> = if combine {
+            vec![(-1i32, 0usize)]
+        } else {
+            (0..nsrc as usize).map(|i| (i as i32, i)).collect()
+        };
+        let n_runs = src_runs.len();
+
+        let boundary_alpha = self.params.abs_alpha;
+        let ndt = adj_interval as f32 * dt;
+
+        let mut total_misfit = 0.0f64;
+
+        for (run_idx, (isrc, ref_idx)) in src_runs.into_iter().enumerate() {
+            log::info!(
+                "Adjoint: source {}/{} ({} steps, {} checkpoints)…",
+                run_idx + 1, n_runs, nt, nsa
+            );
+
+            let ref_y = load_ref_y(ref_idx)?;
+
+            // ── Forward pass ────────────────────────────────────────────
+            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4)?;
+            {
+                let obs_bytes = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
+                let mut enc = self.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor { label: Some("clr_obs") });
+                enc.clear_buffer(&self.obs_buf, 0, Some(obs_bytes));
+                self.queue.submit([enc.finish()]);
+            }
+
+            // CPU checkpoints (reverse time order)
+            let mut uy_fwd: Vec<Vec<f32>> = vec![vec![0.0f32; npt as usize]; nsa as usize];
+
+            for it in 0..nt {
+                let mut p = self.params;
+                p.it       = it;
+                p.isrc     = isrc;
+                p.abs_alpha = boundary_alpha;
+                self.write_params(&p);
+
+                let mut enc = self.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor { label: Some("fw") });
+                {
+                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("fw_pass"), timestamp_writes: None });
+                    let bg = &self.bind_group;
+                    let pl = &self.pipelines;
+                    if sh {
+                        dispatch_npt(&mut cp, &pl.div_sy,        bg, npt);
+                        dispatch_n  (&mut cp, &pl.stf_dsy,       bg, nsrc);
+                        dispatch_npt(&mut cp, &pl.add_vy,        bg, npt);
+                        dispatch_npt(&mut cp, &pl.div_vy,        bg, npt);
+                        dispatch_npt(&mut cp, &pl.add_sy_sh,     bg, npt);
+                        dispatch_n  (&mut cp, &pl.save_obs_y_sh, bg, nrec);
+                    }
+                }
+                self.queue.submit([enc.finish()]);
+
+                // Save checkpoint of velocity (reverse order: isa=nsa-1 earliest, isa=0 latest)
+                if (it + 1) % adj_interval == 0 {
+                    let isa = (nsa - (it + 1) / adj_interval) as usize;
+                    uy_fwd[isa] = self.readback_field(F_VY)?;
+                }
+
+                if it % 200 == 199 { self.device.poll(wgpu::Maintain::Wait); }
+            }
+            self.device.poll(wgpu::Maintain::Wait);
+
+            // ── Misfit + adjoint STF ────────────────────────────────────
+            let syn_obs = self.readback_obs(nrec, nt)?;
+
+            let (misfit, adstf) = if sh {
+                let syn_y = Self::slice_obs(&syn_obs, OBS_Y, nrec as usize, nt as usize);
+                compute_waveform_misfit(&syn_y, &ref_y, nrec as usize, nt as usize, dt)
+            } else {
+                (0.0_f64, vec![0.0f32; nrec as usize * nt as usize])
+            };
+            total_misfit += misfit;
+            log::info!("Adjoint: source {} misfit = {:.6e}", run_idx + 1, misfit);
+
+            // Write adstf into obs[OBS_Y] slot
+            {
+                let offset = (OBS_Y * nrec as usize * nt as usize * 4) as u64;
+                self.queue.write_buffer(&self.obs_buf, offset, bytemuck::cast_slice(&adstf));
+            }
+
+            // ── Adjoint time loop ───────────────────────────────────────
+            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4)?;
+
+            for it in 0..nt {
+                let mut p = self.params;
+                p.it        = it;
+                p.isrc      = -1;
+                p.abs_alpha = boundary_alpha;
+                self.write_params(&p);
+
+                let mut enc = self.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor { label: Some("adj") });
+                {
+                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("adj_pass"), timestamp_writes: None });
+                    let bg = &self.bind_group;
+                    let pl = &self.pipelines;
+                    if sh {
+                        dispatch_npt(&mut cp, &pl.div_sy,    bg, npt);
+                        dispatch_n  (&mut cp, &pl.adj_dsy,   bg, nrec);
+                        dispatch_npt(&mut cp, &pl.add_vy,    bg, npt);
+                        dispatch_npt(&mut cp, &pl.div_vy,    bg, npt);
+                        dispatch_npt(&mut cp, &pl.add_sy_sh, bg, npt);
+                    }
+                }
+                self.queue.submit([enc.finish()]);
+
+                if it % adj_interval == 0 {
+                    let isae = it / adj_interval;
+                    if (isae as usize) < uy_fwd.len() {
+                        let fw = uy_fwd[isae as usize].clone();
+                        self.write_field_slice(F_DSY, &fw)?;
+
+                        {
+                            let mut p = self.params;
+                            p.it        = it;
+                            p.abs_alpha = ndt;
+                            self.write_params(&p);
+                        }
+
+                        let mut enc = self.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor { label: Some("img") });
+                        {
+                            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                                label: Some("img_pass"), timestamp_writes: None });
+                            let bg = &self.bind_group;
+                            let pl = &self.pipelines;
+                            dispatch_npt(&mut cp, &pl.div_uy,          bg, npt);
+                            dispatch_npt(&mut cp, &pl.div_fw,          bg, npt);
+                            dispatch_npt(&mut cp, &pl.interaction_muy, bg, npt);
+                        }
+                        self.queue.submit([enc.finish()]);
+                    }
+                }
+
+                if it % 200 == 199 { self.device.poll(wgpu::Maintain::Wait); }
+            }
+            self.device.poll(wgpu::Maintain::Wait);
+        }
+
+        log::info!("Adjoint: total misfit = {:.6e}", total_misfit);
+
+        // ── Smooth the gradient ───────────────────────────────────────────
+        log::info!("Adjoint: smoothing kernel (sigma={:.1})…", smooth_sigma);
+        {
+            let mut p = self.params;
+            p.abs_alpha = smooth_sigma;
+            self.write_params(&p);
+        }
+        {
+            let mut enc = self.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("gsum") });
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("gsum_pass"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.init_gsum, &self.bind_group, npt);
+            drop(cp);
+            self.queue.submit([enc.finish()]);
+        }
+        {
+            let mut enc = self.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("gx") });
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("gx_pass"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.gaussian_x, &self.bind_group, npt);
+            drop(cp);
+            self.queue.submit([enc.finish()]);
+        }
+        {
+            let mut enc = self.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("gz") });
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("gz_pass"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.gaussian_z, &self.bind_group, npt);
+            drop(cp);
+            self.queue.submit([enc.finish()]);
+        }
+        self.device.poll(wgpu::Maintain::Wait);
+
+        // ── Save gradient ─────────────────────────────────────────────────
+        let kmu = self.readback_field(F_K_MU)?;
+        let kmu_path = out_dir.join("proc000000_kmu.bin");
+        write_raw_f32(&kmu_path, &kmu)?;
+
+        let kmu_model_path = out_dir.join("gradient_kmu.bin");
+        {
+            let mut file = fs::File::create(&kmu_model_path)
+                .with_context(|| format!("Cannot create {}", kmu_model_path.display()))?;
+            file.write_all(&(npt as i32).to_le_bytes())?;
+            file.write_all(bytemuck::cast_slice(&kmu))?;
+        }
+        log::info!("Adjoint: gradient saved to {}", kmu_path.display());
+
+        Ok(())
     }
 }

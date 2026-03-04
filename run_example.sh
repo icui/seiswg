@@ -67,9 +67,21 @@ echo ""
 echo "▶ Clearing previous output…"
 rm -rf "$EXAMPLE_DIR/output"
 
-# ── Run solver ────────────────────────────────────────────────────────────
+# ── Step 1: prepare observed traces if a separate forward config exists ───
+# Examples with config_true.ini run a forward pass first (model_true → obs_traces).
+if [ -f "$EXAMPLE_DIR/config_true.ini" ]; then
+  echo ""
+  echo "▶ Generating observed traces (forward with model_true)…"
+  rm -rf "$EXAMPLE_DIR/obs_traces" "$EXAMPLE_DIR/obs_trash"
+  START=$(date +%s%3N)
+  RUST_LOG=seispie_wg=info "$BINARY" "$EXAMPLE_DIR/config_true.ini"
+  END=$(date +%s%3N)
+  echo "  ✓ done in $(( END - START )) ms"
+fi
+
+# ── Run main solver ───────────────────────────────────────────────────────
 echo ""
-echo "▶ Running forward simulation…"
+echo "▶ Running simulation ($(grep -m1 'mode' "$EXAMPLE_DIR/config.ini" | tr -d ' '))…"
 START=$(date +%s%3N)
 RUST_LOG=seispie_wg=info "$BINARY" "$EXAMPLE_DIR/config.ini"
 END=$(date +%s%3N)

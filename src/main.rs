@@ -36,6 +36,9 @@ fn main() -> Result<()> {
         "forward" => {
             slv.run_forward()?;
         }
+        "adjoint" => {
+            slv.run_adjoint()?;
+        }
         other => {
             anyhow::bail!("Workflow '{}' is not yet implemented in seispie-wg", other);
         }

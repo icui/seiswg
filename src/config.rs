@@ -31,6 +31,8 @@ pub struct SolverConfig {
     pub threads_per_block: u32,
     pub combine_sources:   bool,
     pub save_snapshot:     u32,
+    pub adj_interval:      u32,
+    pub smooth:            f32,
     pub grid:     GridConfig,
     pub boundary: BoundaryConfig,
 }
@@ -149,6 +151,8 @@ pub fn load(config_path: &Path) -> Result<Config> {
         threads_per_block: get_u32_or(&ini, "solver", "threads_per_block", 128),
         combine_sources:  get_bool(&ini, "solver", "combine_sources", false),
         save_snapshot:    get_u32_or(&ini, "solver", "save_snapshot", 0),
+        adj_interval:     get_u32_or(&ini, "solver", "adj_interval", 10),
+        smooth:           get_f32_or(&ini, "solver", "smooth", 5.0),
         grid,
         boundary,
     };

@@ -502,9 +502,10 @@ fn save_obs_ry(@builtin(workgroup_id) wgid: vec3<u32>) {
 fn interaction_muy(@builtin(global_invocation_id) gid: vec3<u32>) {
     let k   = gid.x;
     if k >= params.npt { return; }
+    // abs_alpha is repurposed by the adjoint runner as ndt = adj_interval * dt
     af(F_K_MU, k,
         (gf(F_DVYDX, k) * gf(F_DVYDX_C, k) + gf(F_DVYDZ, k) * gf(F_DVYDZ_C, k))
-        * params.dt);
+        * params.abs_alpha);
 }
 
 // =========================================================================
@@ -550,4 +551,59 @@ fn gaussian_z(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let gsum = gf(F_GSUM, k);
     sf(F_K_MU, k, select(0.0, sumz / gsum, gsum > 1e-30));
+}
+
+// =========================================================================
+//  Adjoint source injection and imaging-condition helpers
+// =========================================================================
+
+/// Inject adjoint STF (pre-loaded into obs[OBS_Y] slot) at receiver positions.
+/// Call with dispatch_n(nrec) during the adjoint time loop.
+@compute @workgroup_size(1)
+fn adj_dsy(@builtin(workgroup_id) wgid: vec3<u32>) {
+    let ir = wgid.x;
+    let km = rec_id(ir);
+    let kr = ir * params.nt + params.it;
+    af(F_DSY, km, obs[OBS_Y * params.nrec * params.nt + kr]);
+}
+
+/// ∂(v_y)/∂x → DVYDX,  ∂(v_y)/∂z → DVYDZ  (adjoint velocity gradient)
+@compute @workgroup_size(64)
+fn div_uy(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k  = gid.x;
+    if k >= params.npt { return; }
+    let ij = ij_from(k);
+    sf(F_DVYDX, k, diff_x1(F_VY, ij.x, k));
+    sf(F_DVYDZ, k, diff_z1(F_VY, ij.y, k));
+}
+
+/// ∂(fw_vy stored in F_DSY)/∂x → DVYDX_C,  ∂/∂z → DVYDZ_C  (fw velocity gradients)
+@compute @workgroup_size(64)
+fn div_fw(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k  = gid.x;
+    if k >= params.npt { return; }
+    let ij = ij_from(k);
+    sf(F_DVYDX_C, k, diff_x1(F_DSY, ij.x, k));
+    sf(F_DVYDZ_C, k, diff_z1(F_DSY, ij.y, k));
+}
+
+/// Initialise F_GSUM for Gaussian normalisation.  sigma = params.abs_alpha.
+/// Dispatch: ceil(npt / 64) workgroups.
+@compute @workgroup_size(64)
+fn init_gsum(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k     = gid.x;
+    if k >= params.npt { return; }
+    let ij    = ij_from(k);
+    let sigma = params.abs_alpha;
+    var sumx  = 0.0f;
+    for (var n = 0u; n < params.nx; n++) {
+        let d = f32(i32(ij.x) - i32(n));
+        sumx += exp(-d * d / (2.0 * sigma * sigma));
+    }
+    var sumz  = 0.0f;
+    for (var n = 0u; n < params.nz; n++) {
+        let d = f32(i32(ij.y) - i32(n));
+        sumz += exp(-d * d / (2.0 * sigma * sigma));
+    }
+    sf(F_GSUM, k, sumx * sumz);
 }
