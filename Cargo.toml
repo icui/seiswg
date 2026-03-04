@@ -1,0 +1,24 @@
+[package]
+name = "seispie-wg"
+version = "0.1.0"
+edition = "2021"
+description = "2D finite-difference seismic solver – Rust + WebGPU backend"
+
+[[bin]]
+name = "seispie-wg"
+path = "src/main.rs"
+
+[dependencies]
+# WebGPU runtime (Vulkan / Metal / DX12 / native WebGPU)
+wgpu        = "22"
+# Async executor
+pollster    = "0.3"
+# Safe byte-casting between Rust types and raw bytes
+bytemuck    = { version = "1", features = ["derive"] }
+# Error handling
+anyhow      = "1"
+# INI config file parser
+configparser = "3"
+# Logging
+env_logger  = "0.11"
+log         = "0.4"

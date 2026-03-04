@@ -1,9 +1,30 @@
-*.pyc
+# Rust
+/target/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Editor
 *.swp
+*.swo
+.idea/
+.vscode/
+
+# Output / scratch
+**/output/*
+scratch/
+
+# Misc
 doc/_build
 parameters*c
 paths*c
-
-**/output/*
-scratch
-.mypy_cache
