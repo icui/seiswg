@@ -97,3 +97,6 @@ echo "  ✓ PNG files written alongside output data"
 echo ""
 echo "Done.  Output:"
 find "$EXAMPLE_DIR/output" -name "*.png" | sort | sed 's/^/  /'
+# Also report model PNGs written by plot_results.py for adjoint mode
+find "$EXAMPLE_DIR" -maxdepth 2 \( -path "*/model_init/*.png" -o -path "*/model_true/*.png" \) \
+  | sort | sed 's/^/  /'
