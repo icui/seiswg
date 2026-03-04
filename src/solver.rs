@@ -15,70 +15,68 @@ use wgpu::util::DeviceExt;
 use crate::config::Config;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Field-slice IDs  (must match the WGSL constants in fd2d.wgsl)
+// Field-slice IDs  (must match the WGSL F_* constants in fd2d.wgsl)
+// Each field occupies `npt` consecutive f32 values in the GPU fields buffer.
 // ──────────────────────────────────────────────────────────────────────────
-const N_FIELDS: usize = 44;
 
-// These WGSL field IDs are used by GPU kernels; not all are referenced directly in Rust.
-#[allow(dead_code)]
-const F_VY:      usize = 0;
-#[allow(dead_code)]
-const F_UY:      usize = 1;
-// const F_SXY: usize = 2;
-// const F_SZY: usize = 3;
-#[allow(dead_code)]
-const F_DSY:     usize = 4;
-#[allow(dead_code)]
-const F_DVYDX:   usize = 5;
-#[allow(dead_code)]
-const F_DVYDZ:   usize = 6;
-// const F_VX: usize = 7;
-// const F_VZ: usize = 8;
-// const F_UX: usize = 9;
-// const F_UZ: usize = 10;
-// const F_SXX: usize = 11;
-// const F_SZZ: usize = 12;
-// const F_SXZ: usize = 13;
-// const F_DSX: usize = 14;
-// const F_DSZ: usize = 15;
-// const F_DVXDX: usize = 16;
-// const F_DVXDZ: usize = 17;
-// const F_DVZDX: usize = 18;
-// const F_DVZDZ: usize = 19;
-// spin fields 20-29
-#[allow(dead_code)]
-const F_DVYDX_C: usize = 26;  // reused as fw-wavefield grad-x during adjoint
-#[allow(dead_code)]
-const F_DVYDZ_C: usize = 27;  // reused as fw-wavefield grad-z during adjoint
-// model fields
-#[allow(dead_code)]
-const F_LAM: usize = 30;
-#[allow(dead_code)]
-const F_MU:  usize = 31;
-#[allow(dead_code)]
-const F_NU:  usize = 32;
-#[allow(dead_code)]
-const F_J:   usize = 33;
-#[allow(dead_code)]
-const F_LAM_C: usize = 34;
-#[allow(dead_code)]
-const F_MU_C:  usize = 35;
-#[allow(dead_code)]
-const F_NU_C:  usize = 36;
-#[allow(dead_code)]
-const F_RHO:   usize = 37;
-// const F_BOUND: usize = 38;
-// adjoint fields
-// const F_K_LAM: usize = 39;
-#[allow(dead_code)]
-const F_K_MU:  usize = 40;
-// const F_K_RHO: usize = 41;
-#[allow(dead_code)]
-const F_GSUM:  usize = 42;
-// const F_GTMP: usize = 43;
+const N_FIELDS:     usize = 44;
+const N_DYN_FIELDS: usize = 30; // dynamic fields zeroed between sources (indices 0–29)
 
-// Dynamic fields to zero between sources (indices 0-29).
-const N_DYN_FIELDS: usize = 30;
+/// Complete set of GPU field-slice IDs, mirroring the WGSL `F_*` constants.
+mod field_ids {
+    #![allow(dead_code)]
+    // SH wavefield
+    pub const F_VY:      usize = 0;
+    pub const F_UY:      usize = 1;
+    pub const F_SXY:     usize = 2;
+    pub const F_SZY:     usize = 3;
+    pub const F_DSY:     usize = 4;
+    pub const F_DVYDX:   usize = 5;
+    pub const F_DVYDZ:   usize = 6;
+    // PSV wavefield
+    pub const F_VX:      usize = 7;
+    pub const F_VZ:      usize = 8;
+    pub const F_UX:      usize = 9;
+    pub const F_UZ:      usize = 10;
+    pub const F_SXX:     usize = 11;
+    pub const F_SZZ:     usize = 12;
+    pub const F_SXZ:     usize = 13;
+    pub const F_DSX:     usize = 14;
+    pub const F_DSZ:     usize = 15;
+    pub const F_DVXDX:   usize = 16;
+    pub const F_DVXDZ:   usize = 17;
+    pub const F_DVZDX:   usize = 18;
+    pub const F_DVZDZ:   usize = 19;
+    // Micropolar (spin) wavefield
+    pub const F_VY_C:    usize = 20;
+    pub const F_UY_C:    usize = 21;
+    pub const F_SYX_C:   usize = 22;
+    pub const F_SYY_C:   usize = 23;
+    pub const F_SYZ_C:   usize = 24;
+    pub const F_DSY_C:   usize = 25;
+    pub const F_DVYDX_C: usize = 26; // also: fw-wavefield ∂v_y/∂x during adjoint
+    pub const F_DVYDZ_C: usize = 27; // also: fw-wavefield ∂v_y/∂z during adjoint
+    pub const F_DUZDX:   usize = 28;
+    pub const F_DUXDZ:   usize = 29;
+    // Model parameters
+    pub const F_LAM:     usize = 30;
+    pub const F_MU:      usize = 31;
+    pub const F_NU:      usize = 32;
+    pub const F_J:       usize = 33;
+    pub const F_LAM_C:   usize = 34;
+    pub const F_MU_C:    usize = 35;
+    pub const F_NU_C:    usize = 36;
+    pub const F_RHO:     usize = 37;
+    pub const F_BOUND:   usize = 38;
+    // Adjoint sensitivity kernels
+    pub const F_K_LAM:   usize = 39;
+    pub const F_K_MU:    usize = 40;
+    pub const F_K_RHO:   usize = 41;
+    pub const F_GSUM:    usize = 42;
+    pub const F_GTMP:    usize = 43;
+}
+#[allow(unused_imports)]
+use field_ids::*;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Params uniform (must match the WGSL `Params` struct, size = 96 bytes)
@@ -537,7 +535,6 @@ impl Solver {
         };
 
         // ── Allocate flat fields buffer (N_FIELDS × npt f32) ──────────────
-        let _fields_bytes = N_FIELDS * npt as usize * 4;
         let mut fields_init = vec![0.0f32; N_FIELDS * npt as usize];
         // Write model data into their respective slices
         let copy_field = |dst: &mut Vec<f32>, fid: usize, src: &[f32]| {
@@ -834,7 +831,7 @@ impl Solver {
             );
 
             // ── Clear dynamic wavefields ──────────────────────────────────
-            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4)?;
+            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
 
             // ── Clear obs buffer ──────────────────────────────────────────
             {
@@ -847,19 +844,10 @@ impl Solver {
 
             // ── Time loop ─────────────────────────────────────────────────
             for it in 0..nt {
-                // Update params on GPU
                 let mut p = self.params;
                 p.it   = it;
                 p.isrc = isrc;
-                let params_size = std::mem::size_of::<Params>() as u64;
-                self.queue.write_buffer(
-                    &self.params_buf, 0,
-                    &{
-                        let mut buf = vec![0u8; ((params_size + 255) / 256 * 256) as usize];
-                        buf[..params_size as usize].copy_from_slice(bytemuck::bytes_of(&p));
-                        buf
-                    }
-                );
+                self.write_params(&p);
 
                 let mut enc = self.device.create_command_encoder(
                     &wgpu::CommandEncoderDescriptor { label: Some("step") });
@@ -972,12 +960,11 @@ impl Solver {
     // ──────────────────────────────────────────────────────────────────────
 
     /// Zero the first `byte_count` bytes of `fields_buf` on the GPU.
-    fn clear_wavefields(&self, byte_count: usize) -> Result<()> {
+    fn clear_wavefields(&self, byte_count: usize) {
         let mut enc = self.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("clear_fields") });
         enc.clear_buffer(&self.fields_buf, 0, Some(byte_count as u64));
         self.queue.submit([enc.finish()]);
-        Ok(())
     }
 
     /// Save a velocity snapshot (called at `save_snapshot` intervals).
@@ -1014,15 +1001,12 @@ impl Solver {
             write_raw_f32(&out_dir.join(format!("proc{:06}_vy.bin", it)), vy)?;
         }
         if psv {
-            let vx_fid = 7;
-            let vz_fid = 8;
-            let vx = &floats[vx_fid * npt..(vx_fid + 1) * npt];
-            let vz = &floats[vz_fid * npt..(vz_fid + 1) * npt];
+            let vx = &floats[F_VX * npt..(F_VX + 1) * npt];
+            let vz = &floats[F_VZ * npt..(F_VZ + 1) * npt];
             write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), vx)?;
             write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), vz)?;
             if spin {
-                let vy_c_fid = 20;
-                let ry = &floats[vy_c_fid * npt..(vy_c_fid + 1) * npt];
+                let ry = &floats[F_VY_C * npt..(F_VY_C + 1) * npt];
                 write_raw_f32(&out_dir.join(format!("proc{:06}_ry.bin", it)), ry)?;
             }
         }
@@ -1100,13 +1084,42 @@ impl Solver {
         Ok(result)
     }
 
-    /// Upload a Vec<f32> into one field slice (fid) of the GPU fields buffer.
-    fn write_field_slice(&self, fid: usize, data: &[f32]) -> Result<()> {
-        let npt = self.npt as usize;
-        let offset = (fid * npt * 4) as u64;
-        let bytes: &[u8] = bytemuck::cast_slice(data);
-        self.queue.write_buffer(&self.fields_buf, offset, bytes);
-        Ok(())
+    /// Upload a slice of f32 values into one field slice (fid) of the GPU fields buffer.
+    fn write_field_slice(&self, fid: usize, data: &[f32]) {
+        let offset = (fid * self.npt as usize * 4) as u64;
+        self.queue.write_buffer(&self.fields_buf, offset, bytemuck::cast_slice(data));
+    }
+
+    /// Smooth the `F_K_MU` gradient with a 2-D separable Gaussian.
+    ///
+    /// `sigma` is in grid points. Uses three ordered compute passes in a single
+    /// command encoder: `init_gsum` → `gaussian_x` → `gaussian_z`.
+    /// Between passes, WebGPU guarantees storage-buffer visibility.
+    fn smooth_gradient(&self, sigma: f32) {
+        let npt = self.npt;
+        let mut p = self.params;
+        p.abs_alpha = sigma; // abs_alpha repurposed as σ for smoothing kernels
+        self.write_params(&p);
+
+        let mut enc = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("smooth") });
+        {
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("smooth_gsum"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.init_gsum, &self.bind_group, npt);
+        }
+        {
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("smooth_x"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.gaussian_x, &self.bind_group, npt);
+        }
+        {
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("smooth_z"), timestamp_writes: None });
+            dispatch_npt(&mut cp, &self.pipelines.gaussian_z, &self.bind_group, npt);
+        }
+        self.queue.submit([enc.finish()]);
+        self.device.poll(wgpu::Maintain::Wait);
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1205,7 +1218,7 @@ impl Solver {
             let ref_y = load_ref_y(ref_idx)?;
 
             // ── Forward pass ────────────────────────────────────────────
-            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4)?;
+            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
             {
                 let obs_bytes = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
                 let mut enc = self.device.create_command_encoder(
@@ -1271,7 +1284,7 @@ impl Solver {
             }
 
             // ── Adjoint time loop ───────────────────────────────────────
-            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4)?;
+            self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
 
             for it in 0..nt {
                 let mut p = self.params;
@@ -1301,7 +1314,7 @@ impl Solver {
                     let isae = it / adj_interval;
                     if (isae as usize) < uy_fwd.len() {
                         let fw = uy_fwd[isae as usize].clone();
-                        self.write_field_slice(F_DSY, &fw)?;
+                        self.write_field_slice(F_DSY, &fw);
 
                         {
                             let mut p = self.params;
@@ -1334,39 +1347,7 @@ impl Solver {
 
         // ── Smooth the gradient ───────────────────────────────────────────
         log::info!("Adjoint: smoothing kernel (sigma={:.1})…", smooth_sigma);
-        {
-            let mut p = self.params;
-            p.abs_alpha = smooth_sigma;
-            self.write_params(&p);
-        }
-        {
-            let mut enc = self.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("gsum") });
-            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gsum_pass"), timestamp_writes: None });
-            dispatch_npt(&mut cp, &self.pipelines.init_gsum, &self.bind_group, npt);
-            drop(cp);
-            self.queue.submit([enc.finish()]);
-        }
-        {
-            let mut enc = self.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("gx") });
-            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gx_pass"), timestamp_writes: None });
-            dispatch_npt(&mut cp, &self.pipelines.gaussian_x, &self.bind_group, npt);
-            drop(cp);
-            self.queue.submit([enc.finish()]);
-        }
-        {
-            let mut enc = self.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("gz") });
-            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gz_pass"), timestamp_writes: None });
-            dispatch_npt(&mut cp, &self.pipelines.gaussian_z, &self.bind_group, npt);
-            drop(cp);
-            self.queue.submit([enc.finish()]);
-        }
-        self.device.poll(wgpu::Maintain::Wait);
+        self.smooth_gradient(smooth_sigma);
 
         // ── Save gradient ─────────────────────────────────────────────────
         let kmu = self.readback_field(F_K_MU)?;

@@ -60,8 +60,8 @@ pub struct Config {
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
-fn get_str<'a>(ini: &'a Ini, section: &str, key: &str) -> Result<Option<String>> {
-    Ok(ini.get(section, key))
+fn get_str(ini: &Ini, section: &str, key: &str) -> Option<String> {
+    ini.get(section, key)
 }
 
 fn get_required(ini: &Ini, section: &str, key: &str) -> Result<String> {
@@ -161,15 +161,15 @@ pub fn load(config_path: &Path) -> Result<Config> {
     let paths = PathConfig {
         output: resolve(base,
             &get_required(&ini, "path", "output")?),
-        output_traces: get_str(&ini, "path", "output_traces")?
+        output_traces: get_str(&ini, "path", "output_traces")
             .map(|s| resolve(base, &s)),
-        model_true: get_str(&ini, "path", "model_true")?
+        model_true: get_str(&ini, "path", "model_true")
             .map(|s| resolve(base, &s)),
-        model_init: get_str(&ini, "path", "model_init")?
+        model_init: get_str(&ini, "path", "model_init")
             .map(|s| resolve(base, &s)),
         sources:  resolve(base, &get_required(&ini, "path", "sources")?),
         stations: resolve(base, &get_required(&ini, "path", "stations")?),
-        traces:   get_str(&ini, "path", "traces")?
+        traces:   get_str(&ini, "path", "traces")
             .map(|s| resolve(base, &s)),
     };
 
