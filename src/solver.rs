@@ -108,19 +108,32 @@ struct Station {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Obs component indices (matching WGSL OBS_* constants)
+// Obs / STF component indices  (must match the WGSL OBS_* / STF_* constants)
 // ──────────────────────────────────────────────────────────────────────────
-const OBS_X: usize = 0;
-const OBS_Y: usize = 1;
-const OBS_Z: usize = 2;
-const OBS_YI: usize = 3;
-// const OBS_YC: usize = 4;
-const N_OBS_COMP: usize = 5;
 
-const STF_X: usize = 0;
-const STF_Y: usize = 1;
-const STF_Z: usize = 2;
-const N_STF_COMP: usize = 3;
+/// Observation-buffer component offsets (each = nrec×nt f32 values).
+mod obs_ids {
+    #![allow(dead_code)]
+    pub const OBS_X:  usize = 0; // u_x (PSV)
+    pub const OBS_Y:  usize = 1; // u_y (SH) or u_y^c (spin micro-rotation)
+    pub const OBS_Z:  usize = 2; // u_z (PSV)
+    pub const OBS_YI: usize = 3; // spin: isolated rotation
+    pub const OBS_YC: usize = 4; // spin: curl rotation
+    pub const N_OBS_COMP: usize = 5;
+}
+#[allow(unused_imports)]
+use obs_ids::*;
+
+/// Source-time-function buffer component offsets (each = nsrc×nt f32 values).
+mod stf_ids {
+    #![allow(dead_code)]
+    pub const STF_X: usize = 0;
+    pub const STF_Y: usize = 1;
+    pub const STF_Z: usize = 2;
+    pub const N_STF_COMP: usize = 3;
+}
+#[allow(unused_imports)]
+use stf_ids::*;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Compute-pipeline bundle
@@ -254,10 +267,9 @@ fn write_npy_f32(path: &Path, data: &[f32], nrows: usize, ncols: usize) -> Resul
     );
     // Total prefix must be a multiple of 64.  Prefix = 10 (magic+ver+len) + header_len.
     let min_header_len = dict.len() + 1; // +1 for trailing '\n'
-    let padded = ((min_header_len + 63) / 64) * 64;
-    let header_len = padded; // length field in the prefix
+    let header_len = ((min_header_len + 63) / 64) * 64;
     let mut header = dict.into_bytes();
-    // Pad with spaces up to header_len - 1, then '\n'
+    // Pad with spaces up to header_len – 1, then '\n'
     while header.len() < header_len - 1 {
         header.push(b' ');
     }
@@ -338,9 +350,9 @@ fn compute_waveform_misfit(
 
             let t = it as f32 * dt;
             let taper = if t <= t_min {
-                0.5 + 0.5 * ((std::f32::consts::PI * (t_min - t) / taper_width).cos())
+                0.5 + 0.5 * ((PI * (t_min - t) / taper_width).cos())
             } else if t >= t_max {
-                0.5 + 0.5 * ((std::f32::consts::PI * (t_max - t) / taper_width).cos())
+                0.5 + 0.5 * ((PI * (t_max - t) / taper_width).cos())
             } else {
                 1.0
             };
@@ -506,10 +518,12 @@ impl Solver {
         let z_data = load_model_field(&model_dir.join("proc000000_z.bin"))?;
 
         // Compute grid dimensions from coordinate extents
-        let lx = x_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-            - x_data.iter().cloned().fold(f32::INFINITY, f32::min);
-        let lz = z_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-            - z_data.iter().cloned().fold(f32::INFINITY, f32::min);
+        let extent = |v: &[f32]| {
+            v.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+                - v.iter().cloned().fold(f32::INFINITY, f32::min)
+        };
+        let lx = extent(&x_data);
+        let lz = extent(&z_data);
         let nx = (((npt as f64) * (lx as f64) / (lz as f64)).sqrt().round()) as u32;
         let nz = (((npt as f64) * (lz as f64) / (lx as f64)).sqrt().round()) as u32;
         let dx = lx / (nx - 1) as f32;
@@ -645,13 +659,13 @@ impl Solver {
             nrec,
             it:         0,
             isrc:       -1,
-            sh:         if sh   { 1 } else { 0 },
-            psv:        if psv  { 1 } else { 0 },
-            spin:       if spin { 1 } else { 0 },
-            abs_left:   if bc.left   { 1 } else { 0 },
-            abs_right:  if bc.right  { 1 } else { 0 },
-            abs_bottom: if bc.bottom { 1 } else { 0 },
-            abs_top:    if bc.top    { 1 } else { 0 },
+            sh:         sh   as u32,
+            psv:        psv  as u32,
+            spin:       spin as u32,
+            abs_left:   bc.left   as u32,
+            abs_right:  bc.right  as u32,
+            abs_bottom: bc.bottom as u32,
+            abs_top:    bc.top    as u32,
             abs_width:  bc.width,
             abs_alpha:  bc.alpha,
             _pad: [0; 4],
@@ -834,13 +848,7 @@ impl Solver {
             self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
 
             // ── Clear obs buffer ──────────────────────────────────────────
-            {
-                let obs_total = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
-                let mut enc = self.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor { label: Some("clear_obs") });
-                enc.clear_buffer(&self.obs_buf, 0, Some(obs_total));
-                self.queue.submit([enc.finish()]);
-            }
+            self.clear_obs_buffer(nrec, nt);
 
             // ── Time loop ─────────────────────────────────────────────────
             for it in 0..nt {
@@ -906,7 +914,7 @@ impl Solver {
             self.device.poll(wgpu::Maintain::Wait);
 
             // ── Save traces ───────────────────────────────────────────────
-            let obs = self.readback_obs(nrec, nt)?;
+            let obs = self.readback_obs(nrec, nt);
             let idx = isrc_out as usize;
 
             if sh {
@@ -967,79 +975,46 @@ impl Solver {
         self.queue.submit([enc.finish()]);
     }
 
+    /// Zero the entire obs buffer on the GPU.
+    fn clear_obs_buffer(&self, nrec: u32, nt: u32) {
+        let obs_bytes = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
+        let mut enc = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("clear_obs") });
+        enc.clear_buffer(&self.obs_buf, 0, Some(obs_bytes));
+        self.queue.submit([enc.finish()]);
+    }
+
     /// Save a velocity snapshot (called at `save_snapshot` intervals).
+    ///
+    /// Reads only the required velocity fields from GPU instead of the entire
+    /// 44-field buffer.
     fn save_snapshot(
         &self,
         it: u32,
         sh: bool, psv: bool, spin: bool,
         out_dir: &Path,
     ) -> Result<()> {
-        // Read back the fields we need from GPU
-        let npt = self.npt as usize;
-        // Use the field at F_VY (0) for SH, F_VX (7) for PSV
-        let field_size = (N_FIELDS * npt * 4) as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label:              Some("snap_stage"),
-            size:               field_size,
-            usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut enc = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("snap_copy") });
-        enc.copy_buffer_to_buffer(&self.fields_buf, 0, &staging, 0, field_size);
-        self.queue.submit([enc.finish()]);
-        self.device.poll(wgpu::Maintain::Wait);
-
-        let slice = staging.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = slice.get_mapped_range();
-        let floats: &[f32] = bytemuck::cast_slice(&data);
-
         if sh {
-            let vy = &floats[F_VY * npt..(F_VY + 1) * npt];
-            write_raw_f32(&out_dir.join(format!("proc{:06}_vy.bin", it)), vy)?;
+            let vy = self.readback_field(F_VY);
+            write_raw_f32(&out_dir.join(format!("proc{:06}_vy.bin", it)), &vy)?;
         }
         if psv {
-            let vx = &floats[F_VX * npt..(F_VX + 1) * npt];
-            let vz = &floats[F_VZ * npt..(F_VZ + 1) * npt];
-            write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), vx)?;
-            write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), vz)?;
+            let vx = self.readback_field(F_VX);
+            let vz = self.readback_field(F_VZ);
+            write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), &vx)?;
+            write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), &vz)?;
             if spin {
-                let ry = &floats[F_VY_C * npt..(F_VY_C + 1) * npt];
-                write_raw_f32(&out_dir.join(format!("proc{:06}_ry.bin", it)), ry)?;
+                let ry = self.readback_field(F_VY_C);
+                write_raw_f32(&out_dir.join(format!("proc{:06}_ry.bin", it)), &ry)?;
             }
         }
-        drop(data);
-        staging.unmap();
         Ok(())
     }
 
     /// Read the full obs GPU buffer back to host as Vec<f32>.
-    fn readback_obs(&self, nrec: u32, nt: u32) -> Result<Vec<f32>> {
-        let obs_size = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label:              Some("obs_stage"),
-            size:               obs_size,
-            usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut enc = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("obs_copy") });
-        enc.copy_buffer_to_buffer(&self.obs_buf, 0, &staging, 0, obs_size);
-        self.queue.submit([enc.finish()]);
-        self.device.poll(wgpu::Maintain::Wait);
-
-        let slice = staging.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::Maintain::Wait);
-
-        let mapped = slice.get_mapped_range();
-        let floats: &[f32] = bytemuck::cast_slice(&mapped);
-        let result = floats.to_vec();
-        drop(mapped);
-        staging.unmap();
-        Ok(result)
+    fn readback_obs(&self, nrec: u32, nt: u32) -> Vec<f32> {
+        let size = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
+        self.readback_gpu_buffer(&self.obs_buf, 0, size)
     }
 
     /// Extract one obs component from the flat buffer.
@@ -1058,19 +1033,27 @@ impl Solver {
     }
 
     /// Download one field slice (fid) from the GPU fields buffer to a Vec<f32>.
-    fn readback_field(&self, fid: usize) -> Result<Vec<f32>> {
+    fn readback_field(&self, fid: usize) -> Vec<f32> {
         let npt = self.npt as usize;
         let offset = (fid * npt * 4) as u64;
         let size   = (npt * 4) as u64;
+        self.readback_gpu_buffer(&self.fields_buf, offset, size)
+    }
+
+    /// Copy `size` bytes from a GPU buffer at `offset` to host memory.
+    ///
+    /// Creates a temporary staging buffer, submits a copy command, blocks
+    /// for completion, and returns the contents as `Vec<f32>`.
+    fn readback_gpu_buffer(&self, src: &wgpu::Buffer, offset: u64, size: u64) -> Vec<f32> {
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label:              Some("field_stage"),
+            label:              Some("readback_stage"),
             size,
             usage:              wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut enc = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("field_copy") });
-        enc.copy_buffer_to_buffer(&self.fields_buf, offset, &staging, 0, size);
+            &wgpu::CommandEncoderDescriptor { label: Some("readback") });
+        enc.copy_buffer_to_buffer(src, offset, &staging, 0, size);
         self.queue.submit([enc.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
 
@@ -1081,7 +1064,7 @@ impl Solver {
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging.unmap();
-        Ok(result)
+        result
     }
 
     /// Upload a slice of f32 values into one field slice (fid) of the GPU fields buffer.
@@ -1219,13 +1202,7 @@ impl Solver {
 
             // ── Forward pass ────────────────────────────────────────────
             self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
-            {
-                let obs_bytes = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
-                let mut enc = self.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor { label: Some("clr_obs") });
-                enc.clear_buffer(&self.obs_buf, 0, Some(obs_bytes));
-                self.queue.submit([enc.finish()]);
-            }
+            self.clear_obs_buffer(nrec, nt);
 
             // CPU checkpoints (reverse time order)
             let mut uy_fwd: Vec<Vec<f32>> = vec![vec![0.0f32; npt as usize]; nsa as usize];
@@ -1258,7 +1235,7 @@ impl Solver {
                 // Save checkpoint of velocity (reverse order: isa=nsa-1 earliest, isa=0 latest)
                 if (it + 1) % adj_interval == 0 {
                     let isa = (nsa - (it + 1) / adj_interval) as usize;
-                    uy_fwd[isa] = self.readback_field(F_VY)?;
+                    uy_fwd[isa] = self.readback_field(F_VY);
                 }
 
                 if it % 200 == 199 { self.device.poll(wgpu::Maintain::Wait); }
@@ -1266,7 +1243,7 @@ impl Solver {
             self.device.poll(wgpu::Maintain::Wait);
 
             // ── Misfit + adjoint STF ────────────────────────────────────
-            let syn_obs = self.readback_obs(nrec, nt)?;
+            let syn_obs = self.readback_obs(nrec, nt);
 
             let (misfit, adstf) = if sh {
                 let syn_y = Self::slice_obs(&syn_obs, OBS_Y, nrec as usize, nt as usize);
@@ -1350,7 +1327,7 @@ impl Solver {
         self.smooth_gradient(smooth_sigma);
 
         // ── Save gradient ─────────────────────────────────────────────────
-        let kmu = self.readback_field(F_K_MU)?;
+        let kmu = self.readback_field(F_K_MU);
         let kmu_path = out_dir.join("proc000000_kmu.bin");
         write_raw_f32(&kmu_path, &kmu)?;
 
