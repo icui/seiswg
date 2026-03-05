@@ -95,10 +95,10 @@ fn gen_spin(example_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Adjoint example: homogeneous model_init + checkerboard model_true, 201×201 nodes, dx=dz=2400 m.
+/// Adjoint example: homogeneous model_init + checkerboard model_true, 200×200 nodes, dx=dz=2400 m.
 fn gen_adjoint(example_dir: &Path) -> anyhow::Result<()> {
-    const NX: usize = 201;
-    const NZ: usize = 201;
+    const NX: usize = 200;
+    const NZ: usize = 200;
     const DX: f32 = 2400.0;
     const DZ: f32 = 2400.0;
     const NPT: usize = NX * NZ;

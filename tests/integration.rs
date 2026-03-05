@@ -246,7 +246,7 @@ fn test_spin() {
     assert_close(&ry_got, &ry_ref, "spin/ry_000000.npy");
 }
 
-/// **Adjoint (SH)** — 201×201 checkerboard model; 15 sources × 147 receivers.
+/// **Adjoint (SH)** — 200×200 checkerboard model; 15 sources × 147 receivers.
 ///
 /// Observed traces (`obs_traces/`) are pre-committed to the repository.
 /// Only the adjoint pass is run here; the separate `config_true.ini` forward
