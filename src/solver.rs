@@ -596,7 +596,14 @@ impl Solver {
             &wgpu::DeviceDescriptor {
                 label: Some("seispie"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    // Browser WebGPU implementations reject vendor-specific limits
+                    // (e.g. maxInterStageShaderComponents) that aren't in the spec.
+                    // Use only the limits the adapter itself advertises.
+                    adapter.limits()
+                } else {
+                    wgpu::Limits::default()
+                },
                 memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
