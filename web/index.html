@@ -219,7 +219,8 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
   <div style="flex:1"></div>
   <div class="sb-hint">
     All textareas are editable.<br>
-    Modify any config before running.<br><br>
+    <strong>model.js</strong> runs in the browser<br>
+    to generate binary model files.<br><br>
     Runs entirely in-browser via<br>
     <strong>WebGPU + WebAssembly</strong>.<br><br>
     Source format:<br>
@@ -289,7 +290,7 @@ const RAW_BASE = 'https://raw.githubusercontent.com/icui/seiswg/main/examples/';
 const fileCache = {};
 
 async function fetchPresetFiles(name) {
-  const tabs = PRESETS[name].tabs;
+  const tabs = PRESETS[name].tabs.filter(t => t !== 'model.js');
   const entries = await Promise.all(tabs.map(async fname => {
     const key = name + '/' + fname;
     if (!fileCache[key]) {
@@ -302,28 +303,139 @@ async function fetchPresetFiles(name) {
   return Object.fromEntries(entries);
 }
 
+// ── Shared makeBin helper injected at the top of every model.js ─────────────
+const MODEL_JS_PRELUDE = `
+// Encode float32 array as seispie binary: int32 npt header + npt × f32
+function makeBin(arr) {
+  const buf = new ArrayBuffer(4 + arr.length * 4);
+  new DataView(buf).setInt32(0, arr.length, true);
+  new Float32Array(buf, 4).set(arr);
+  return new Uint8Array(buf);
+}
+`;
+
 const PRESETS = {
   forward: {
     title: 'Forward (SH) — homogeneous 200×200, dx=100 m',
-    model_type: 'forward',
-    tabs: ['config.ini', 'sources.dat', 'stations.dat'],
+    tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+    modelJs: `// Homogeneous SH model — Forward example
+// Edit any value, then click Run Simulation.
+// Must return { 'model/proc000000_<field>.bin': Uint8Array, … }
+
+const nx = 200, nz = 200;   // grid points
+const dx = 100.0, dz = 100.0; // m
+const vp = 3000.0;   // m/s  — P-wave velocity
+const vs = 1732.0;   // m/s  — S-wave velocity
+const rho = 2700.0;  // kg/m³ — density
+
+const npt = nx * nz;
+const x = new Float32Array(npt), z = new Float32Array(npt);
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    x[i*nz+j] = i * dx;
+    z[i*nz+j] = j * dz;
+  }
+
+return {
+  'model/proc000000_x.bin':   makeBin(x),
+  'model/proc000000_z.bin':   makeBin(z),
+  'model/proc000000_vp.bin':  makeBin(new Float32Array(npt).fill(vp)),
+  'model/proc000000_vs.bin':  makeBin(new Float32Array(npt).fill(vs)),
+  'model/proc000000_rho.bin': makeBin(new Float32Array(npt).fill(rho)),
+};
+`,
   },
   spin: {
     title: 'Spin (PSV+Micropolar) — homogeneous 200×200, dx=1 m',
-    model_type: 'spin',
-    tabs: ['config.ini', 'sources.dat', 'stations.dat'],
+    tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+    modelJs: `// Homogeneous micropolar (spin) model — Spin example
+// Edit any value, then click Run Simulation.
+
+const nx = 200, nz = 200;   // grid points
+const dx = 1.0, dz = 1.0;  // m
+
+const rho      = 2700.0;   // kg/m³ — density
+const lambda   = 8.10e9;   // Pa   — Lamé λ
+const mu       = 8.10e9;   // Pa   — Lamé μ
+const nu       = 1.005e9;  // Pa   — micropolar ν
+const j        = 2700.0;   // kg/m — micro-inertia j
+const lambda_c = 7.75e8;   // Pa   — couple-stress λ_c
+const mu_c     = 1.50e8;   // Pa   — couple-stress μ_c
+const nu_c     = 3.00e8;   // Pa   — couple-stress ν_c
+
+const npt = nx * nz;
+const x = new Float32Array(npt), z = new Float32Array(npt);
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    x[i*nz+j] = i * dx;
+    z[i*nz+j] = j * dz;
+  }
+
+return {
+  'model/proc000000_x.bin':        makeBin(x),
+  'model/proc000000_z.bin':        makeBin(z),
+  'model/proc000000_rho.bin':      makeBin(new Float32Array(npt).fill(rho)),
+  'model/proc000000_lambda.bin':   makeBin(new Float32Array(npt).fill(lambda)),
+  'model/proc000000_mu.bin':       makeBin(new Float32Array(npt).fill(mu)),
+  'model/proc000000_nu.bin':       makeBin(new Float32Array(npt).fill(nu)),
+  'model/proc000000_j.bin':        makeBin(new Float32Array(npt).fill(j)),
+  'model/proc000000_lambda_c.bin': makeBin(new Float32Array(npt).fill(lambda_c)),
+  'model/proc000000_mu_c.bin':     makeBin(new Float32Array(npt).fill(mu_c)),
+  'model/proc000000_nu_c.bin':     makeBin(new Float32Array(npt).fill(nu_c)),
+};
+`,
   },
   adjoint: {
     title: 'Adjoint — checkerboard Vs recovery, 201×201, dx=2400 m',
-    model_type: 'adjoint',
-    tabs: ['config.ini', 'config_true.ini', 'sources.dat', 'stations.dat'],
+    tabs: ['config.ini', 'model.js', 'config_true.ini', 'sources.dat', 'stations.dat'],
+    modelJs: `// Checkerboard Vs recovery model — Adjoint example
+// Edit any value, then click Run Simulation.
+// Must return both model_init and model_true file sets.
+
+const nx = 201, nz = 201;
+const dx = 2400.0, dz = 2400.0; // m
+
+const vp0  = 5500.0;  // m/s  — background Vp
+const vs0  = 3500.0;  // m/s  — background Vs
+const rho0 = 2600.0;  // kg/m³
+
+// Checkerboard perturbation applied to Vs in the true model
+const cell     = 40.0;   // grid cells per half-wavelength
+const dvsFrac  = 0.114;  // fractional amplitude
+const kx = Math.PI / cell, kz = Math.PI / cell;
+
+const npt = nx * nz;
+const x = new Float32Array(npt), z = new Float32Array(npt);
+const vs_true = new Float32Array(npt);
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    const k = i*nz + j;
+    x[k] = i * dx;  z[k] = j * dz;
+    vs_true[k] = vs0 * (1 + dvsFrac * Math.sin(kx*i) * Math.sin(kz*j));
+  }
+
+return {
+  // Initial (smooth) model
+  'model_init/proc000000_x.bin':   makeBin(x),
+  'model_init/proc000000_z.bin':   makeBin(z),
+  'model_init/proc000000_vp.bin':  makeBin(new Float32Array(npt).fill(vp0)),
+  'model_init/proc000000_vs.bin':  makeBin(new Float32Array(npt).fill(vs0)),
+  'model_init/proc000000_rho.bin': makeBin(new Float32Array(npt).fill(rho0)),
+  // True (checkerboard) model for generating synthetic observations
+  'model_true/proc000000_x.bin':   makeBin(x),
+  'model_true/proc000000_z.bin':   makeBin(z),
+  'model_true/proc000000_vp.bin':  makeBin(new Float32Array(npt).fill(vp0)),
+  'model_true/proc000000_vs.bin':  makeBin(vs_true),
+  'model_true/proc000000_rho.bin': makeBin(new Float32Array(npt).fill(rho0)),
+};
+`,
   },
 };
 
 PRESETS.custom = {
   title: 'Custom Configuration',
-  model_type: 'forward',
-  tabs: ['config.ini','sources.dat','stations.dat'],
+  tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+  modelJs: PRESETS.forward.modelJs,
 };
 
 // ════════════════════════════════════════════════════════════════════
@@ -390,6 +502,14 @@ async function loadPreset(name) {
     return;
   }
 
+  // Inject model.js from the preset's built-in defaults (not on GitHub)
+  const basePreset = name === 'custom'
+    ? PRESETS[document.getElementById('custom-model-type').value]
+    : PRESETS[name];
+  if (!currentFiles['model.js'] && basePreset && basePreset.modelJs) {
+    currentFiles['model.js'] = basePreset.modelJs;
+  }
+
   document.getElementById('config-editor').value = currentFiles[currentTab] || '';
   document.getElementById('run-btn').disabled = false;
   document.getElementById('run-icon').textContent = '▶';
@@ -414,13 +534,13 @@ async function onCustomModelChange() {
   const mt = document.getElementById('custom-model-type').value;
   const src = PRESETS[mt];
   // Update custom preset metadata to match the chosen base type
-  PRESETS.custom.tabs       = src.tabs.slice();
-  PRESETS.custom.model_type = mt;
+  PRESETS.custom.tabs    = ['config.ini', 'model.js', ...src.tabs.filter(t => t !== 'config.ini' && t !== 'model.js')];
+  PRESETS.custom.modelJs = src.modelJs;
   currentTab = 'config.ini';
 
   const tabsEl = document.getElementById('config-tabs');
   tabsEl.innerHTML = '';
-  src.tabs.forEach(t => {
+  PRESETS.custom.tabs.forEach(t => {
     const b = document.createElement('button');
     b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
     b.textContent = t;
@@ -437,6 +557,8 @@ async function onCustomModelChange() {
   } catch (e) {
     document.getElementById('config-editor').value = '# Error: ' + e.message;
   }
+  // Inject model.js defaults for the chosen model type
+  if (src.modelJs) currentFiles['model.js'] = src.modelJs;
   document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
   document.getElementById('run-btn').disabled = false;
   document.getElementById('run-icon').textContent = '▶';
@@ -457,11 +579,6 @@ async function runSim() {
     return;
   }
 
-  const p = PRESETS[currentPreset];
-  const mt = currentPreset === 'custom'
-    ? document.getElementById('custom-model-type').value
-    : p.model_type;
-
   // Reset UI
   stopAllAnimations();
   document.getElementById('results-section').classList.remove('hidden');
@@ -472,16 +589,32 @@ async function runSim() {
   document.getElementById('run-btn').disabled = true;
   document.getElementById('run-icon').textContent = '';
 
-  appendLog('[info] Starting ' + mt + ' simulation via WebGPU…', 'l-info');
+  // ── Execute the model.js script to produce binary model files ──────────
+  let modelFiles;
+  try {
+    const script = currentFiles['model.js'] || '';
+    // new Function body must use `return` — the prelude injects makeBin
+    modelFiles = new Function(MODEL_JS_PRELUDE + script)();
+    if (!modelFiles || typeof modelFiles !== 'object')
+      throw new Error('model.js must return a plain object of { path: Uint8Array }');
+  } catch (e) {
+    appendLog('[err] model.js error: ' + e, 'l-err');
+    setStatus('failed');
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-icon').textContent = '▶';
+    return;
+  }
+
+  appendLog('[info] Starting simulation via WebGPU…', 'l-info');
   appendLog('[info] Initializing GPU…', 'l-info');
 
   try {
     const result = await run_simulation(
-      mt,
       currentFiles['config.ini']      || '',
       currentFiles['sources.dat']     || '',
       currentFiles['stations.dat']    || '',
       currentFiles['config_true.ini'] || undefined,
+      modelFiles,
     );
 
     appendLog('[ok] Simulation complete.', 'l-ok');
@@ -489,7 +622,9 @@ async function runSim() {
     setStatus('done');
     document.getElementById('run-btn').disabled = false;
     document.getElementById('run-icon').textContent = '▶';
-    renderResults(result, mt);
+    const cfg = currentFiles['config.ini'] || '';
+    const workflow = (cfg.match(/^\s*workflow\s*=\s*(\S+)/m) || [])[1] || 'forward';
+    renderResults(result, workflow);
   } catch (e) {
     appendLog('[err] ' + e, 'l-err');
     setStatus('failed');

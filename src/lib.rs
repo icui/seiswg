@@ -8,121 +8,12 @@
 pub mod config;
 pub mod solver;
 
-#[cfg(target_arch = "wasm32")]
-use solver::Vfs;
-
-// ── WASM-only model-generation helpers ──────────────────────────────────────
-
-/// Encode a seispie model binary: int32 npt header + npt × f32 payload.
-#[cfg(target_arch = "wasm32")]
-fn make_bin(data: &[f32]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + data.len() * 4);
-    out.extend_from_slice(&(data.len() as i32).to_le_bytes());
-    out.extend_from_slice(bytemuck::cast_slice(data));
-    out
-}
-
-/// Generate in-memory model files for the `forward` example.
-#[cfg(target_arch = "wasm32")]
-fn gen_forward_vfs() -> Vfs {
-    const NX: usize = 200;
-    const NZ: usize = 200;
-    const DX: f32 = 100.0;
-    const DZ: f32 = 100.0;
-    const NPT: usize = NX * NZ;
-    let mut x = vec![0.0f32; NPT];
-    let mut z = vec![0.0f32; NPT];
-    for i in 0..NX { for j in 0..NZ {
-        x[i * NZ + j] = i as f32 * DX;
-        z[i * NZ + j] = j as f32 * DZ;
-    }}
-    let mut vfs = Vfs::new();
-    let pfx = "model/proc000000_";
-    vfs.insert(format!("{pfx}x.bin"),   make_bin(&x));
-    vfs.insert(format!("{pfx}z.bin"),   make_bin(&z));
-    vfs.insert(format!("{pfx}vp.bin"),  make_bin(&vec![3000.0f32; NPT]));
-    vfs.insert(format!("{pfx}vs.bin"),  make_bin(&vec![1732.0f32; NPT]));
-    vfs.insert(format!("{pfx}rho.bin"), make_bin(&vec![2700.0f32; NPT]));
-    vfs
-}
-
-/// Generate in-memory model files for the `spin` example.
-#[cfg(target_arch = "wasm32")]
-fn gen_spin_vfs() -> Vfs {
-    const NX: usize = 200;
-    const NZ: usize = 200;
-    const NPT: usize = NX * NZ;
-    let mut x = vec![0.0f32; NPT];
-    let mut z = vec![0.0f32; NPT];
-    for i in 0..NX { for j in 0..NZ {
-        x[i * NZ + j] = i as f32;
-        z[i * NZ + j] = j as f32;
-    }}
-    let mut vfs = Vfs::new();
-    let pfx = "model/proc000000_";
-    vfs.insert(format!("{pfx}x.bin"),        make_bin(&x));
-    vfs.insert(format!("{pfx}z.bin"),        make_bin(&z));
-    vfs.insert(format!("{pfx}rho.bin"),      make_bin(&vec![2700.0f32;  NPT]));
-    vfs.insert(format!("{pfx}lambda.bin"),   make_bin(&vec![8.10e9f32;  NPT]));
-    vfs.insert(format!("{pfx}mu.bin"),       make_bin(&vec![8.10e9f32;  NPT]));
-    vfs.insert(format!("{pfx}nu.bin"),       make_bin(&vec![1.005e9f32; NPT]));
-    vfs.insert(format!("{pfx}j.bin"),        make_bin(&vec![2700.0f32;  NPT]));
-    vfs.insert(format!("{pfx}lambda_c.bin"), make_bin(&vec![7.75e8f32;  NPT]));
-    vfs.insert(format!("{pfx}mu_c.bin"),     make_bin(&vec![1.50e8f32;  NPT]));
-    vfs.insert(format!("{pfx}nu_c.bin"),     make_bin(&vec![3.00e8f32;  NPT]));
-    vfs
-}
-
-/// Generate in-memory model files for the `adjoint` example.
-#[cfg(target_arch = "wasm32")]
-fn gen_adjoint_vfs() -> (Vfs, Vfs) {
-    const NX: usize = 201;
-    const NZ: usize = 201;
-    const DX: f32 = 2400.0;
-    const DZ: f32 = 2400.0;
-    const NPT: usize = NX * NZ;
-    const VP0: f32 = 5500.0;
-    const VS0: f32 = 3500.0;
-    const RHO0: f32 = 2600.0;
-    const CELL: f32 = 40.0;
-    const DVS_FRAC: f32 = 0.114;
-    let kx = std::f32::consts::PI / CELL;
-    let kz = std::f32::consts::PI / CELL;
-
-    let mut x = vec![0.0f32; NPT];
-    let mut z = vec![0.0f32; NPT];
-    let mut vs_true = vec![0.0f32; NPT];
-    for i in 0..NX { for j in 0..NZ {
-        let k = i * NZ + j;
-        x[k] = i as f32 * DX;
-        z[k] = j as f32 * DZ;
-        vs_true[k] = VS0 * (1.0 + DVS_FRAC * (kx * i as f32).sin() * (kz * j as f32).sin());
-    }}
-
-    let init_pfx = "model_init/proc000000_";
-    let mut init_vfs = Vfs::new();
-    init_vfs.insert(format!("{init_pfx}x.bin"),   make_bin(&x));
-    init_vfs.insert(format!("{init_pfx}z.bin"),   make_bin(&z));
-    init_vfs.insert(format!("{init_pfx}vp.bin"),  make_bin(&vec![VP0;  NPT]));
-    init_vfs.insert(format!("{init_pfx}vs.bin"),  make_bin(&vec![VS0;  NPT]));
-    init_vfs.insert(format!("{init_pfx}rho.bin"), make_bin(&vec![RHO0; NPT]));
-
-    let true_pfx = "model_true/proc000000_";
-    let mut true_vfs = Vfs::new();
-    true_vfs.insert(format!("{true_pfx}x.bin"),   make_bin(&x));
-    true_vfs.insert(format!("{true_pfx}z.bin"),   make_bin(&z));
-    true_vfs.insert(format!("{true_pfx}vp.bin"),  make_bin(&vec![VP0;  NPT]));
-    true_vfs.insert(format!("{true_pfx}vs.bin"),  make_bin(&vs_true));
-    true_vfs.insert(format!("{true_pfx}rho.bin"), make_bin(&vec![RHO0; NPT]));
-
-    (init_vfs, true_vfs)
-}
-
 // ── WASM API ─────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_api {
     use super::*;
+    use solver::Vfs;
     use wasm_bindgen::prelude::*;
     use js_sys::{Float32Array, Object, Reflect, Uint8Array};
 
@@ -130,19 +21,7 @@ mod wasm_api {
     #[wasm_bindgen(start)]
     pub fn init() {
         console_error_panic_hook::set_once();
-        // console_log sends log::* output to browser DevTools console
         let _ = console_log::init_with_level(log::Level::Info);
-    }
-
-    // ── Helper: build a JS {key: Uint8Array} object from a Vfs ──────────────
-
-    fn vfs_to_js(vfs: &Vfs) -> Object {
-        let obj = Object::new();
-        for (k, v) in vfs {
-            let arr = Uint8Array::from(v.as_slice());
-            Reflect::set(&obj, &JsValue::from_str(k), &arr).unwrap();
-        }
-        obj
     }
 
     /// Parse a NumPy v1 .npy file (f32, 2-D) from bytes.
@@ -157,24 +36,21 @@ mod wasm_api {
             .collect())
     }
 
-    // ── Model generation ─────────────────────────────────────────────────────
-
-    /// Generate model binary files for the specified example.
+    /// Build a VFS from a JS object whose values are `Uint8Array` model files.
     ///
-    /// Returns a JS object: `{ "model/proc000000_rho.bin": Uint8Array, … }`
-    #[wasm_bindgen]
-    pub fn gen_model(model_type: &str) -> Result<Object, JsValue> {
-        match model_type {
-            "forward" => Ok(vfs_to_js(&gen_forward_vfs())),
-            "spin"    => Ok(vfs_to_js(&gen_spin_vfs())),
-            "adjoint" => {
-                let (init, true_) = gen_adjoint_vfs();
-                let mut merged = init;
-                merged.extend(true_);
-                Ok(vfs_to_js(&merged))
-            }
-            other => Err(JsValue::from_str(&format!("Unknown model type: {other}"))),
+    /// The JS `model.js` script returns `{ "model/proc000000_rho.bin": Uint8Array, … }`
+    /// and this function converts that into the Rust `Vfs` (HashMap<String, Vec<u8>>).
+    fn vfs_from_js_object(obj: &Object) -> Result<Vfs, JsValue> {
+        let mut vfs = Vfs::new();
+        let keys = js_sys::Object::keys(obj);
+        for i in 0..keys.length() {
+            let key = keys.get(i).as_string()
+                .ok_or_else(|| JsValue::from_str("model_files: non-string key"))?;
+            let val = Reflect::get(obj, &JsValue::from_str(&key))?;
+            let bytes = Uint8Array::from(val).to_vec();
+            vfs.insert(key, bytes);
         }
+        Ok(vfs)
     }
 
     // ── Simulation ────────────────────────────────────────────────────────────
@@ -183,11 +59,12 @@ mod wasm_api {
     ///
     /// Parameters
     /// ----------
-    /// - `model_type`      – "forward" | "spin" | "adjoint"
     /// - `config_ini`      – INI text for the main simulation
     /// - `sources_dat`     – sources table text
     /// - `stations_dat`    – stations table text
     /// - `config_true_ini` – (adjoint only) INI text for the model_true forward pass
+    /// - `model_files`     – JS object `{ path: Uint8Array }` produced by the
+    ///                        user-editable `model.js` script
     ///
     /// Returns a JS object with:
     ///   `{ nrec, nt, dt, traces: { uy: Float32Array, … } }`
@@ -195,37 +72,34 @@ mod wasm_api {
     ///   `{ npt, kmu: Float32Array }`
     #[wasm_bindgen]
     pub async fn run_simulation(
-        model_type:      &str,
         config_ini:      &str,
         sources_dat:     &str,
         stations_dat:    &str,
         config_true_ini: Option<String>,
+        model_files:     JsValue,
     ) -> Result<JsValue, JsValue> {
         let err = |e: anyhow::Error| JsValue::from_str(&format!("{e:#}"));
 
-        // ── Build base VFS ──────────────────────────────────────────────
-        let mut vfs: Vfs = match model_type {
-            "forward" => gen_forward_vfs(),
-            "spin"    => gen_spin_vfs(),
-            "adjoint" => { let (i, t) = gen_adjoint_vfs(); let mut m = i; m.extend(t); m }
-            other => return Err(JsValue::from_str(&format!("Unknown model type: {other}"))),
-        };
+        // ── Build VFS from the JS model_files object ──────────────────────
+        let model_obj = Object::from(model_files);
+        let mut vfs = vfs_from_js_object(&model_obj)?;
         vfs.insert("sources.dat".to_string(),  sources_dat.as_bytes().to_vec());
         vfs.insert("stations.dat".to_string(), stations_dat.as_bytes().to_vec());
 
+        // ── Parse config (needed early to determine workflow) ─────────────
+        let cfg = config::load_from_str(config_ini, "").map_err(err)?;
+
         // ── Adjoint: run forward with model_true first to get obs traces ──
-        if model_type == "adjoint" {
+        if cfg.workflow == "adjoint" {
             if let Some(true_ini) = &config_true_ini {
                 let cfg_true = config::load_from_str(true_ini, "").map_err(err)?;
                 let mut slv_true = solver::Solver::new(cfg_true, &vfs).await.map_err(err)?;
                 let obs_vfs = slv_true.run_forward().await.map_err(err)?;
-                // Merge obs traces into main vfs so adjoint can find them
                 vfs.extend(obs_vfs);
             }
         }
 
         // ── Main simulation ───────────────────────────────────────────────
-        let cfg = config::load_from_str(config_ini, "").map_err(err)?;
         let nt  = cfg.solver.grid.nt;
         let dt  = cfg.solver.grid.dt;
         let mut slv = solver::Solver::new(cfg.clone(), &vfs).await.map_err(err)?;
@@ -285,7 +159,6 @@ mod wasm_api {
                 let nx  = (npt as f64).sqrt().round() as u32;
                 let nz  = (npt + nx - 1) / nx;
                 let out = slv.run_adjoint(&vfs).await.map_err(err)?;
-                // kmu raw bytes (no npy header) – find by filename
                 if let Some(kmu_bytes) = out.iter()
                     .find(|(k, _)| k.ends_with("proc000000_kmu.bin"))
                     .map(|(_, v)| v)
@@ -306,3 +179,4 @@ mod wasm_api {
         Ok(result_obj.into())
     }
 }
+
