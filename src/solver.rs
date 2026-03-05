@@ -597,9 +597,9 @@ impl Solver {
                 label: Some("seispie"),
                 required_features: wgpu::Features::empty(),
                 required_limits: if cfg!(target_arch = "wasm32") {
-                    // Browser WebGPU implementations reject vendor-specific limits
-                    // (e.g. maxInterStageShaderComponents) that aren't in the spec.
-                    // Use only the limits the adapter itself advertises.
+                    // Use only limits the adapter advertises; unrecognised keys
+                    // (e.g. maxInterStageShaderComponents) are stripped by the
+                    // JS monkey-patch in web/index.html before reaching Chrome.
                     adapter.limits()
                 } else {
                     wgpu::Limits::default()

@@ -265,6 +265,43 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
 </div>
 
 <script type="module">
+// ── Chrome compatibility: strip limits removed from the WebGPU spec ─────────
+// wgpu unconditionally serialises every Limits field into requiredLimits,
+// including "maxInterStageShaderComponents" which was removed from the WebGPU
+// spec and causes Chrome ≥126 to throw
+//   "The limit X with a non-undefined value is not recognized."
+// Patch requestDevice to silently drop any key Chrome no longer knows.
+(function patchWebGPULimits() {
+  if (typeof GPUAdapter === 'undefined') return;
+  // Exhaustive list of limits in the WebGPU spec (as of 2025).
+  const KNOWN_LIMITS = new Set([
+    'maxTextureDimension1D', 'maxTextureDimension2D', 'maxTextureDimension3D',
+    'maxTextureArrayLayers', 'maxBindGroups', 'maxBindGroupsPlusVertexBuffers',
+    'maxBindingsPerBindGroup', 'maxDynamicUniformBuffersPerPipelineLayout',
+    'maxDynamicStorageBuffersPerPipelineLayout', 'maxSampledTexturesPerShaderStage',
+    'maxSamplersPerShaderStage', 'maxStorageBuffersPerShaderStage',
+    'maxStorageTexturesPerShaderStage', 'maxUniformBuffersPerShaderStage',
+    'maxUniformBufferBindingSize', 'maxStorageBufferBindingSize',
+    'minUniformBufferOffsetAlignment', 'minStorageBufferOffsetAlignment',
+    'maxVertexBuffers', 'maxBufferSize', 'maxVertexAttributes',
+    'maxVertexBufferArrayStride', 'maxColorAttachments',
+    'maxColorAttachmentBytesPerSample', 'maxComputeWorkgroupStorageSize',
+    'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupSizeX',
+    'maxComputeWorkgroupSizeY', 'maxComputeWorkgroupSizeZ',
+    'maxComputeWorkgroupsPerDimension',
+  ]);
+  const _orig = GPUAdapter.prototype.requestDevice;
+  GPUAdapter.prototype.requestDevice = function(descriptor) {
+    if (descriptor && descriptor.requiredLimits) {
+      const filtered = {};
+      for (const [k, v] of Object.entries(descriptor.requiredLimits)) {
+        if (KNOWN_LIMITS.has(k)) filtered[k] = v;
+      }
+      descriptor = { ...descriptor, requiredLimits: filtered };
+    }
+    return _orig.call(this, descriptor);
+  };
+})();
 // ════════════════════════════════════════════════════════════════════
 // WASM initialization
 // ════════════════════════════════════════════════════════════════════
