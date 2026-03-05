@@ -3,10 +3,16 @@
 //! Corresponds to `seispie/solver/fd2d/fd2d.py` + `solver.py` in the Python
 //! code-base, but every kernel runs as a WGSL compute shader on the GPU.
 
+use std::collections::HashMap;
 use std::f32::consts::PI;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::path::Path;
+
+/// Virtual file system: maps virtual path strings to byte contents.
+pub type Vfs = HashMap<String, Vec<u8>>;
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -204,8 +210,97 @@ pub struct Solver {
 // I/O helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────────────────
+// VFS helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Parse model field bytes (4-byte int32 npt header + npt × f32).
+fn load_model_field_bytes(bytes: &[u8]) -> Result<Vec<f32>> {
+    if bytes.len() < 4 {
+        anyhow::bail!("Model data too small");
+    }
+    let npt = i32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+    let expected = 4 + npt * 4;
+    if bytes.len() < expected {
+        anyhow::bail!("Model data too short (expected {} bytes, got {})", expected, bytes.len());
+    }
+    Ok(bytes[4..expected]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect())
+}
+
+/// Load model field from VFS; fall back to filesystem on native builds.
+fn load_model_field_vfs(vfs: &Vfs, path: &Path) -> Result<Vec<f32>> {
+    let key = path.to_string_lossy();
+    if let Some(b) = vfs.get(key.as_ref()).or_else(|| vfs.get(key.trim_start_matches("./"))) {
+        return load_model_field_bytes(b);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    return load_model_field(path);
+    #[cfg(target_arch = "wasm32")]
+    anyhow::bail!("VFS: model file not found: {}", path.display())
+}
+
+/// Parse a text table from an in-memory string.
+fn load_text_table_str(text: &str) -> Result<Vec<Vec<f64>>> {
+    let rows = text
+        .lines()
+        .filter(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') })
+        .map(|l| l.split_whitespace().map(|tok| tok.parse::<f64>().unwrap_or(0.0)).collect())
+        .collect();
+    Ok(rows)
+}
+
+/// Load text table from VFS; fall back to filesystem on native builds.
+fn load_text_table_vfs(vfs: &Vfs, path: &Path) -> Result<Vec<Vec<f64>>> {
+    let key = path.to_string_lossy();
+    if let Some(b) = vfs.get(key.as_ref()).or_else(|| vfs.get(key.trim_start_matches("./"))) {
+        return load_text_table_str(std::str::from_utf8(b)?);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    return load_text_table(path);
+    #[cfg(target_arch = "wasm32")]
+    anyhow::bail!("VFS: table file not found: {}", path.display())
+}
+
+/// Build a NumPy v1 .npy file in memory (little-endian f32, 2-D).
+pub fn make_npy_bytes(data: &[f32], nrows: usize, ncols: usize) -> Vec<u8> {
+    let dict = format!(
+        "{{'descr': '<f4', 'fortran_order': False, 'shape': ({}, {}), }}",
+        nrows, ncols
+    );
+    let header_len = ((dict.len() + 1 + 63) / 64) * 64;
+    let mut header = dict.into_bytes();
+    while header.len() < header_len - 1 { header.push(b' '); }
+    header.push(b'\n');
+    let mut out = Vec::with_capacity(10 + header_len + data.len() * 4);
+    out.extend_from_slice(b"\x93NUMPY\x01\x00");
+    out.extend_from_slice(&(header_len as u16).to_le_bytes());
+    out.extend_from_slice(&header);
+    out.extend_from_slice(bytemuck::cast_slice(data));
+    out
+}
+
+/// Parse a NumPy v1 .npy file from memory (f32 2-D array).
+fn load_npy_bytes(bytes: &[u8]) -> Result<Vec<f32>> {
+    if bytes.len() < 10 || &bytes[..6] != b"\x93NUMPY" {
+        anyhow::bail!("Not a NumPy file");
+    }
+    let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+    let data_start = 10 + header_len;
+    if bytes.len() < data_start || (bytes.len() - data_start) % 4 != 0 {
+        anyhow::bail!("Truncated .npy file");
+    }
+    Ok(bytes[data_start..]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect())
+}
+
 /// Read a binary model parameter file produced by the Python solver.
 /// Format: 4-byte i32 npt, followed by npt × f32 values.
+#[cfg(not(target_arch = "wasm32"))]
 fn load_model_field(path: &Path) -> Result<Vec<f32>> {
     let bytes = fs::read(path)
         .with_context(|| format!("Cannot read model file {}", path.display()))?;
@@ -228,6 +323,7 @@ fn load_model_field(path: &Path) -> Result<Vec<f32>> {
 }
 
 /// Parse a whitespace-separated text file into a 2-D Vec.
+#[cfg(not(target_arch = "wasm32"))]
 fn load_text_table(path: &Path) -> Result<Vec<Vec<f64>>> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
@@ -259,6 +355,7 @@ fn ricker(t: f32, f0: f32, t0: f32, ang_deg: f32, amp: f32) -> (f32, f32, f32) {
 
 /// Write a 2-D f32 array as a NumPy .npy file (version 1.0, little-endian f4).
 /// shape = [nrows, ncols].
+#[cfg(not(target_arch = "wasm32"))]
 fn write_npy_f32(path: &Path, data: &[f32], nrows: usize, ncols: usize) -> Result<()> {
     // Header dict
     let dict = format!(
@@ -290,6 +387,7 @@ fn write_npy_f32(path: &Path, data: &[f32], nrows: usize, ncols: usize) -> Resul
 }
 
 /// Write raw f32 binary (compatible with `np.fromfile(..., dtype='float32')`).
+#[cfg(not(target_arch = "wasm32"))]
 fn write_raw_f32(path: &Path, data: &[f32]) -> Result<()> {
     let bytes: &[u8] = bytemuck::cast_slice(data);
     fs::write(path, bytes)
@@ -299,6 +397,7 @@ fn write_raw_f32(path: &Path, data: &[f32]) -> Result<()> {
 
 /// Read a NumPy v1 .npy file containing a 2-D f32 array.
 /// Returns the data as a flat Vec<f32>.
+#[cfg(not(target_arch = "wasm32"))]
 fn load_npy_f32(path: &Path) -> Result<Vec<f32>> {
     let bytes = fs::read(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
@@ -458,23 +557,30 @@ fn dispatch_n(
 // Solver::new
 // ──────────────────────────────────────────────────────────────────────────
 impl Solver {
-    pub fn new(config: Config) -> Result<Self> {
+    /// Number of grid points in the model.
+    pub fn npt(&self) -> u32 { self.npt }
+
+    /// Number of receiver stations.
+    pub fn nrec(&self) -> usize { self.stations.len() }
+
+    pub async fn new(config: Config, vfs: &Vfs) -> Result<Self> {
         // ── GPU initialisation ───────────────────────────────────────────
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
-        }))
-        .ok_or_else(|| anyhow::anyhow!("No WebGPU adapter found"))?;
+        })
+        .await
+        .ok_or_else(|| anyhow::anyhow!("No WebGPU adapter found"))?;;
 
         log::info!("GPU adapter: {:?}", adapter.get_info());
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
+        let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("seispie"),
                 required_features: wgpu::Features::empty(),
@@ -482,7 +588,8 @@ impl Solver {
                 memory_hints: wgpu::MemoryHints::Performance,
             },
             None,
-        ))?;
+        )
+        .await?;
 
         // ── Load model ──────────────────────────────────────────────────
         let spin = config.solver.spin;
@@ -511,11 +618,11 @@ impl Solver {
             )
         };
 
-        let rho_data = load_model_field(&rho_file)?;
+        let rho_data = load_model_field_vfs(vfs, &rho_file)?;
         let npt = rho_data.len() as u32;
 
-        let x_data = load_model_field(&model_dir.join("proc000000_x.bin"))?;
-        let z_data = load_model_field(&model_dir.join("proc000000_z.bin"))?;
+        let x_data = load_model_field_vfs(vfs, &model_dir.join("proc000000_x.bin"))?;
+        let z_data = load_model_field_vfs(vfs, &model_dir.join("proc000000_z.bin"))?;
 
         // Compute grid dimensions from coordinate extents
         let extent = |v: &[f32]| {
@@ -532,16 +639,16 @@ impl Solver {
         log::info!("Grid: nx={} nz={} npt={} dx={:.1} dz={:.1}", nx, nz, npt, dx, dz);
 
         // ── Load additional model fields ─────────────────────────────────
-        let lam_data = load_model_field(&lam_file)?;
-        let mu_data  = load_model_field(&mu_file)?;
+        let lam_data = load_model_field_vfs(vfs, &lam_file)?;
+        let mu_data  = load_model_field_vfs(vfs, &mu_file)?;
 
         let (nu_data, j_data, lam_c_data, mu_c_data, nu_c_data) = if spin {
             (
-                load_model_field(&model_dir.join("proc000000_nu.bin"))?,
-                load_model_field(&model_dir.join("proc000000_j.bin"))?,
-                load_model_field(&model_dir.join("proc000000_lambda_c.bin"))?,
-                load_model_field(&model_dir.join("proc000000_mu_c.bin"))?,
-                load_model_field(&model_dir.join("proc000000_nu_c.bin"))?,
+                load_model_field_vfs(vfs, &model_dir.join("proc000000_nu.bin"))?,
+                load_model_field_vfs(vfs, &model_dir.join("proc000000_j.bin"))?,
+                load_model_field_vfs(vfs, &model_dir.join("proc000000_lambda_c.bin"))?,
+                load_model_field_vfs(vfs, &model_dir.join("proc000000_mu_c.bin"))?,
+                load_model_field_vfs(vfs, &model_dir.join("proc000000_nu_c.bin"))?,
             )
         } else {
             let zeros = vec![0.0f32; npt as usize];
@@ -574,7 +681,7 @@ impl Solver {
         drop(fields_init);
 
         // ── Load sources ─────────────────────────────────────────────────
-        let src_table = load_text_table(&config.paths.sources)?;
+        let src_table = load_text_table_vfs(vfs, &config.paths.sources)?;;
         let nsrc = src_table.len() as u32;
         let nt   = config.solver.grid.nt;
         let dt   = config.solver.grid.dt;
@@ -613,7 +720,7 @@ impl Solver {
         });
 
         // ── Load stations ────────────────────────────────────────────────
-        let rec_table = load_text_table(&config.paths.stations)?;
+        let rec_table = load_text_table_vfs(vfs, &config.paths.stations)?;
         let nrec = rec_table.len() as u32;
         let mut stations: Vec<Station> = Vec::with_capacity(nrec as usize);
         for row in &rec_table {
@@ -810,8 +917,10 @@ impl Solver {
     // Run forward simulation
     // ──────────────────────────────────────────────────────────────────────
 
-    /// Run all forward simulations and save traces to `output/traces/`.
-    pub fn run_forward(&mut self) -> Result<()> {
+    /// Run all forward simulations; output trace files are returned as a `Vfs`
+    /// (and also written to disk on native builds).
+    pub async fn run_forward(&mut self) -> Result<Vfs> {
+        let mut output = Vfs::new();
         let combine = self.config.solver.combine_sources;
         let nsrc    = self.sources.len() as u32;
         let sh      = self.config.solver.sh;
@@ -826,9 +935,9 @@ impl Solver {
         let trace_dir = self.config.paths.output_traces
             .clone()
             .unwrap_or_else(|| out_dir.join("traces"));
-        std::fs::create_dir_all(&trace_dir)?;
-        if snap > 0 {
-            std::fs::create_dir_all(out_dir)?;
+        #[cfg(not(target_arch = "wasm32"))] {
+            std::fs::create_dir_all(&trace_dir)?;
+            if snap > 0 { std::fs::create_dir_all(out_dir)?; }
         }
 
         let runs: Vec<(i32, u32)> = if combine {
@@ -903,7 +1012,7 @@ impl Solver {
 
                 // Snapshot
                 if snap > 0 && it > 0 && it % snap == 0 {
-                    self.save_snapshot(it, sh, psv, spin, out_dir)?;
+                    self.save_snapshot(it, sh, psv, spin, out_dir).await?;
                 }
 
                 // Periodic poll to prevent driver timeout on long runs
@@ -914,53 +1023,64 @@ impl Solver {
             self.device.poll(wgpu::Maintain::Wait);
 
             // ── Save traces ───────────────────────────────────────────────
-            let obs = self.readback_obs(nrec, nt);
+            let obs = self.readback_obs(nrec, nt).await;
             let idx = isrc_out as usize;
 
             if sh {
                 let comp = Self::slice_obs(&obs, OBS_Y, nrec as usize, nt as usize);
-                write_npy_f32(
-                    &trace_dir.join(format!("uy_{:06}.npy", idx)),
-                    &comp, nrec as usize, nt as usize,
-                )?;
-                // Also write raw (vy_ naming kept for back-compat with examples)
-                write_raw_f32(
-                    &trace_dir.join(format!("vy_{:06}.npy", idx)),
-                    &comp,
-                )?;
+                let uy_path = trace_dir.join(format!("uy_{:06}.npy", idx));
+                let vy_path = trace_dir.join(format!("vy_{:06}.npy", idx));
+                let uy_bytes = make_npy_bytes(&comp, nrec as usize, nt as usize);
+                output.insert(uy_path.to_string_lossy().to_string(), uy_bytes.clone());
+                output.insert(vy_path.to_string_lossy().to_string(),
+                    bytemuck::cast_slice::<f32, u8>(&comp).to_vec());
+                #[cfg(not(target_arch = "wasm32"))] {
+                    write_npy_f32(&uy_path, &comp, nrec as usize, nt as usize)?;
+                    write_raw_f32(&vy_path, &comp)?;
+                }
             }
 
             if psv {
                 let comp_x = Self::slice_obs(&obs, OBS_X, nrec as usize, nt as usize);
                 let comp_z = Self::slice_obs(&obs, OBS_Z, nrec as usize, nt as usize);
-                write_npy_f32(
-                    &trace_dir.join(format!("ux_{:06}.npy", idx)),
-                    &comp_x, nrec as usize, nt as usize,
-                )?;
-                write_npy_f32(
-                    &trace_dir.join(format!("uz_{:06}.npy", idx)),
-                    &comp_z, nrec as usize, nt as usize,
-                )?;
-                write_raw_f32(&trace_dir.join(format!("vx_{:06}.npy", idx)), &comp_x)?;
-                write_raw_f32(&trace_dir.join(format!("vz_{:06}.npy", idx)), &comp_z)?;
+                let ux_path = trace_dir.join(format!("ux_{:06}.npy", idx));
+                let uz_path = trace_dir.join(format!("uz_{:06}.npy", idx));
+                let vx_path = trace_dir.join(format!("vx_{:06}.npy", idx));
+                let vz_path = trace_dir.join(format!("vz_{:06}.npy", idx));
+                output.insert(ux_path.to_string_lossy().to_string(),
+                    make_npy_bytes(&comp_x, nrec as usize, nt as usize));
+                output.insert(uz_path.to_string_lossy().to_string(),
+                    make_npy_bytes(&comp_z, nrec as usize, nt as usize));
+                output.insert(vx_path.to_string_lossy().to_string(),
+                    bytemuck::cast_slice::<f32, u8>(&comp_x).to_vec());
+                output.insert(vz_path.to_string_lossy().to_string(),
+                    bytemuck::cast_slice::<f32, u8>(&comp_z).to_vec());
+                #[cfg(not(target_arch = "wasm32"))] {
+                    write_npy_f32(&ux_path, &comp_x, nrec as usize, nt as usize)?;
+                    write_npy_f32(&uz_path, &comp_z, nrec as usize, nt as usize)?;
+                    write_raw_f32(&vx_path, &comp_x)?;
+                    write_raw_f32(&vz_path, &comp_z)?;
+                }
 
                 if spin {
                     let comp_ry = Self::slice_obs(&obs, OBS_Y, nrec as usize, nt as usize);
                     let comp_yi = Self::slice_obs(&obs, OBS_YI, nrec as usize, nt as usize);
-                    write_npy_f32(
-                        &trace_dir.join(format!("ry_{:06}.npy", idx)),
-                        &comp_ry, nrec as usize, nt as usize,
-                    )?;
-                    write_npy_f32(
-                        &trace_dir.join(format!("yi_{:06}.npy", idx)),
-                        &comp_yi, nrec as usize, nt as usize,
-                    )?;
+                    let ry_path = trace_dir.join(format!("ry_{:06}.npy", idx));
+                    let yi_path = trace_dir.join(format!("yi_{:06}.npy", idx));
+                    output.insert(ry_path.to_string_lossy().to_string(),
+                        make_npy_bytes(&comp_ry, nrec as usize, nt as usize));
+                    output.insert(yi_path.to_string_lossy().to_string(),
+                        make_npy_bytes(&comp_yi, nrec as usize, nt as usize));
+                    #[cfg(not(target_arch = "wasm32"))] {
+                        write_npy_f32(&ry_path, &comp_ry, nrec as usize, nt as usize)?;
+                        write_npy_f32(&yi_path, &comp_yi, nrec as usize, nt as usize)?;
+                    }
                 }
             }
 
             log::info!("  → traces saved to {}", trace_dir.display());
         }
-        Ok(())
+        Ok(output)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -988,33 +1108,38 @@ impl Solver {
     ///
     /// Reads only the required velocity fields from GPU instead of the entire
     /// 44-field buffer.
-    fn save_snapshot(
+    async fn save_snapshot(
         &self,
         it: u32,
         sh: bool, psv: bool, spin: bool,
         out_dir: &Path,
     ) -> Result<()> {
         if sh {
-            let vy = self.readback_field(F_VY);
+            let vy = self.readback_field(F_VY).await;
+            #[cfg(not(target_arch = "wasm32"))]
             write_raw_f32(&out_dir.join(format!("proc{:06}_vy.bin", it)), &vy)?;
         }
         if psv {
-            let vx = self.readback_field(F_VX);
-            let vz = self.readback_field(F_VZ);
-            write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), &vx)?;
-            write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), &vz)?;
+            let vx = self.readback_field(F_VX).await;
+            let vz = self.readback_field(F_VZ).await;
+            #[cfg(not(target_arch = "wasm32"))] {
+                write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), &vx)?;
+                write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), &vz)?;
+            }
             if spin {
-                let ry = self.readback_field(F_VY_C);
+                let ry = self.readback_field(F_VY_C).await;
+                #[cfg(not(target_arch = "wasm32"))]
                 write_raw_f32(&out_dir.join(format!("proc{:06}_ry.bin", it)), &ry)?;
             }
         }
+        let _ = out_dir; // suppress unused-variable warning on wasm32
         Ok(())
     }
 
     /// Read the full obs GPU buffer back to host as Vec<f32>.
-    fn readback_obs(&self, nrec: u32, nt: u32) -> Vec<f32> {
+    async fn readback_obs(&self, nrec: u32, nt: u32) -> Vec<f32> {
         let size = (N_OBS_COMP * nrec as usize * nt as usize * 4) as u64;
-        self.readback_gpu_buffer(&self.obs_buf, 0, size)
+        self.readback_gpu_buffer(&self.obs_buf, 0, size).await
     }
 
     /// Extract one obs component from the flat buffer.
@@ -1033,18 +1158,17 @@ impl Solver {
     }
 
     /// Download one field slice (fid) from the GPU fields buffer to a Vec<f32>.
-    fn readback_field(&self, fid: usize) -> Vec<f32> {
+    async fn readback_field(&self, fid: usize) -> Vec<f32> {
         let npt = self.npt as usize;
         let offset = (fid * npt * 4) as u64;
         let size   = (npt * 4) as u64;
-        self.readback_gpu_buffer(&self.fields_buf, offset, size)
+        self.readback_gpu_buffer(&self.fields_buf, offset, size).await
     }
 
     /// Copy `size` bytes from a GPU buffer at `offset` to host memory.
     ///
-    /// Creates a temporary staging buffer, submits a copy command, blocks
-    /// for completion, and returns the contents as `Vec<f32>`.
-    fn readback_gpu_buffer(&self, src: &wgpu::Buffer, offset: u64, size: u64) -> Vec<f32> {
+    /// Uses a oneshot channel so it works on both native and WebGPU/WASM.
+    async fn readback_gpu_buffer(&self, src: &wgpu::Buffer, offset: u64, size: u64) -> Vec<f32> {
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label:              Some("readback_stage"),
             size,
@@ -1055,11 +1179,16 @@ impl Solver {
             &wgpu::CommandEncoderDescriptor { label: Some("readback") });
         enc.copy_buffer_to_buffer(src, offset, &staging, 0, size);
         self.queue.submit([enc.finish()]);
+        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
 
         let slice = staging.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let (tx, rx) = futures_channel::oneshot::channel::<()>();
+        slice.map_async(wgpu::MapMode::Read, move |_| { let _ = tx.send(()); });
+        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
+        let _ = rx.await;
+
         let data = slice.get_mapped_range();
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
@@ -1127,7 +1256,8 @@ impl Solver {
     /// After all sources:
     ///   4. Gaussian smoothing.
     ///   5. Save gradient as `output/proc000000_kmu.bin`.
-    pub fn run_adjoint(&mut self) -> Result<()> {
+    pub async fn run_adjoint(&mut self, vfs: &Vfs) -> Result<Vfs> {
+        let mut output = Vfs::new();
         let sh   = self.config.solver.sh;
         let nt   = self.params.nt;
         let nrec = self.params.nrec;
@@ -1145,6 +1275,7 @@ impl Solver {
         }
 
         let out_dir = self.config.paths.output.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         std::fs::create_dir_all(&out_dir)?;
 
         // ── Load observed (reference) traces ─────────────────────────────
@@ -1152,8 +1283,7 @@ impl Solver {
             .ok_or_else(|| anyhow::anyhow!(
                 "config [path] traces is required for the adjoint workflow"))?;
 
-        // Helper: load the reference trace for source index i.
-        // combine=yes → always loads uy_000000; combine=no → uy_{i:06}.
+        // Helper: load the reference trace for source index i from VFS or disk.
         let load_ref_y = |i: usize| -> Result<Vec<f32>> {
             if sh {
                 let fname = if combine {
@@ -1162,8 +1292,17 @@ impl Solver {
                     format!("uy_{:06}.npy", i)
                 };
                 let p = obs_dir.join(&fname);
-                load_npy_f32(&p)
-                    .with_context(|| format!("Cannot load observed traces {}", p.display()))
+                let key = p.to_string_lossy();
+                if let Some(b) = vfs.get(key.as_ref())
+                    .or_else(|| vfs.get(key.trim_start_matches("./")))
+                {
+                    return load_npy_bytes(b);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                return load_npy_f32(&p)
+                    .with_context(|| format!("Cannot load observed traces {}", p.display()));
+                #[cfg(target_arch = "wasm32")]
+                anyhow::bail!("VFS: obs trace not found: {}", key)
             } else {
                 Ok(vec![])
             }
@@ -1179,7 +1318,6 @@ impl Solver {
             self.queue.submit([enc.finish()]);
         }
 
-        // Source indices to iterate over
         let src_runs: Vec<(i32, usize)> = if combine {
             vec![(-1i32, 0usize)]
         } else {
@@ -1204,13 +1342,12 @@ impl Solver {
             self.clear_wavefields(N_DYN_FIELDS * npt as usize * 4);
             self.clear_obs_buffer(nrec, nt);
 
-            // CPU checkpoints (reverse time order)
             let mut uy_fwd: Vec<Vec<f32>> = vec![vec![0.0f32; npt as usize]; nsa as usize];
 
             for it in 0..nt {
                 let mut p = self.params;
-                p.it       = it;
-                p.isrc     = isrc;
+                p.it        = it;
+                p.isrc      = isrc;
                 p.abs_alpha = boundary_alpha;
                 self.write_params(&p);
 
@@ -1232,18 +1369,21 @@ impl Solver {
                 }
                 self.queue.submit([enc.finish()]);
 
-                // Save checkpoint of velocity (reverse order: isa=nsa-1 earliest, isa=0 latest)
                 if (it + 1) % adj_interval == 0 {
                     let isa = (nsa - (it + 1) / adj_interval) as usize;
-                    uy_fwd[isa] = self.readback_field(F_VY);
+                    uy_fwd[isa] = self.readback_field(F_VY).await;
                 }
 
-                if it % 200 == 199 { self.device.poll(wgpu::Maintain::Wait); }
+                if it % 200 == 199 {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.device.poll(wgpu::Maintain::Wait);
+                }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             self.device.poll(wgpu::Maintain::Wait);
 
             // ── Misfit + adjoint STF ────────────────────────────────────
-            let syn_obs = self.readback_obs(nrec, nt);
+            let syn_obs = self.readback_obs(nrec, nt).await;
 
             let (misfit, adstf) = if sh {
                 let syn_y = Self::slice_obs(&syn_obs, OBS_Y, nrec as usize, nt as usize);
@@ -1254,7 +1394,6 @@ impl Solver {
             total_misfit += misfit;
             log::info!("Adjoint: source {} misfit = {:.6e}", run_idx + 1, misfit);
 
-            // Write adstf into obs[OBS_Y] slot
             {
                 let offset = (OBS_Y * nrec as usize * nt as usize * 4) as u64;
                 self.queue.write_buffer(&self.obs_buf, offset, bytemuck::cast_slice(&adstf));
@@ -1292,14 +1431,12 @@ impl Solver {
                     if (isae as usize) < uy_fwd.len() {
                         let fw = uy_fwd[isae as usize].clone();
                         self.write_field_slice(F_DSY, &fw);
-
                         {
                             let mut p = self.params;
                             p.it        = it;
                             p.abs_alpha = ndt;
                             self.write_params(&p);
                         }
-
                         let mut enc = self.device.create_command_encoder(
                             &wgpu::CommandEncoderDescriptor { label: Some("img") });
                         {
@@ -1315,8 +1452,12 @@ impl Solver {
                     }
                 }
 
-                if it % 200 == 199 { self.device.poll(wgpu::Maintain::Wait); }
+                if it % 200 == 199 {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.device.poll(wgpu::Maintain::Wait);
+                }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             self.device.poll(wgpu::Maintain::Wait);
         }
 
@@ -1327,19 +1468,24 @@ impl Solver {
         self.smooth_gradient(smooth_sigma);
 
         // ── Save gradient ─────────────────────────────────────────────────
-        let kmu = self.readback_field(F_K_MU);
-        let kmu_path = out_dir.join("proc000000_kmu.bin");
-        write_raw_f32(&kmu_path, &kmu)?;
+        let kmu = self.readback_field(F_K_MU).await;
 
+        // Build model-binary bytes (header + f32 data)
+        let mut kmu_model_bytes = Vec::with_capacity(4 + npt as usize * 4);
+        kmu_model_bytes.extend_from_slice(&(npt as i32).to_le_bytes());
+        kmu_model_bytes.extend_from_slice(bytemuck::cast_slice(&kmu));
+        let kmu_path = out_dir.join("proc000000_kmu.bin");
         let kmu_model_path = out_dir.join("gradient_kmu.bin");
-        {
-            let mut file = fs::File::create(&kmu_model_path)
+        output.insert(kmu_path.to_string_lossy().to_string(),
+            bytemuck::cast_slice::<f32, u8>(&kmu).to_vec());
+        output.insert(kmu_model_path.to_string_lossy().to_string(), kmu_model_bytes.clone());
+        #[cfg(not(target_arch = "wasm32"))] {
+            write_raw_f32(&kmu_path, &kmu)?;
+            std::fs::write(&kmu_model_path, &kmu_model_bytes)
                 .with_context(|| format!("Cannot create {}", kmu_model_path.display()))?;
-            file.write_all(&(npt as i32).to_le_bytes())?;
-            file.write_all(bytemuck::cast_slice(&kmu))?;
         }
         log::info!("Adjoint: gradient saved to {}", kmu_path.display());
 
-        Ok(())
+        Ok(output)
     }
 }

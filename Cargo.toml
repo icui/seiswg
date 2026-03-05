@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "2D finite-difference seismic solver – Rust + WebGPU backend"
 
+# Library target (compiled to WASM for the browser build)
+[lib]
+name = "seiswg"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
 [[bin]]
 name = "seiswg"
 path = "src/main.rs"
@@ -16,19 +22,39 @@ path = "src/bin/gen_model.rs"
 name = "plot_results"
 path = "src/bin/plot_results.rs"
 
+# ── Dependencies used on ALL targets ────────────────────────────────────────
 [dependencies]
-# WebGPU runtime (Vulkan / Metal / DX12 / native WebGPU)
-wgpu        = "22"
-# Async executor
-pollster    = "0.3"
-# Safe byte-casting between Rust types and raw bytes
-bytemuck    = { version = "1", features = ["derive"] }
+# WebGPU runtime (Vulkan / Metal / DX12 / WebGPU-in-browser)
+wgpu         = "22"
+# Safe byte-casting
+bytemuck     = { version = "1", features = ["derive"] }
 # Error handling
-anyhow      = "1"
+anyhow       = "1"
 # INI config file parser
 configparser = "3"
-# Logging
-env_logger  = "0.11"
-log         = "0.4"
-# Plotting (PNG output for plot_results binary)
-plotters    = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
+# Logging facade
+log          = "0.4"
+# Async oneshot channel for GPU buffer readback (works on native + WASM)
+futures-channel = "0.3"
+
+# ── Native-only dependencies ─────────────────────────────────────────────────
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Synchronous async executor (for main.rs pollster::block_on)
+pollster     = "0.3"
+# Logging initialiser
+env_logger   = "0.11"
+# Plotting (PNG, used only by plot_results binary)
+plotters     = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
+
+# ── WASM-only dependencies ────────────────────────────────────────────────────
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen          = "0.2"
+wasm-bindgen-futures  = "0.4"
+js-sys                = "0.3"
+console_error_panic_hook = "0.1"
+console_log           = "1"
+# getrandom with js feature is required by some indirect deps on WASM
+getrandom             = { version = "0.2", features = ["js"] }
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+version  = "0.3"
+features = ["console", "Window", "Performance"]

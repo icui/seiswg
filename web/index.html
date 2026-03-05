@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>seiswg — WebGPU seismic solver</title>
+<style>
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --surface2: #21262d;
+  --border:   #30363d;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --accent:   #58a6ff;
+  --green:    #3fb950;
+  --red:      #f85149;
+  --mono: 'Fira Code', 'Consolas', 'Menlo', monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, sans-serif;
+       display: flex; height: 100vh; overflow: hidden; font-size: 14px; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 230px; min-width: 230px; background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+.sb-logo {
+  padding: 18px 18px 14px;
+  font-size: 18px; font-weight: 700; color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.3px;
+}
+.sb-logo span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.sb-section {
+  padding: 14px 18px 6px;
+  font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+.pb {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 18px; background: none; border: none;
+  color: var(--muted); cursor: pointer; text-align: left;
+  width: 100%; font-size: 13px; border-left: 3px solid transparent;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.pb:hover  { background: var(--surface2); color: var(--text); }
+.pb.active { background: var(--surface2); color: var(--accent); border-left-color: var(--accent); }
+.pb .badge {
+  margin-left: auto; font-size: 10px; padding: 2px 6px;
+  border-radius: 10px; background: var(--surface2); color: var(--muted);
+  font-weight: 600;
+}
+.pb.active .badge { background: #1f3560; color: var(--accent); }
+
+.sb-custom-opts {
+  margin: 8px 18px 0;
+  padding: 10px 12px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+}
+.sb-custom-opts label {
+  display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.sb-custom-opts select {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 8px; font-size: 13px; cursor: pointer;
+}
+.sb-custom-opts select:focus { outline: none; border-color: var(--accent); }
+
+.sb-hint {
+  margin: auto 18px 18px;
+  padding: 10px 12px;
+  background: #1f2937; border: 1px solid #1d4ed8;
+  border-radius: 6px; font-size: 11.5px; color: #93c5fd; line-height: 1.5;
+}
+
+/* ── Main area ───────────────────────────────────────────────────────── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+.toolbar {
+  padding: 11px 22px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; min-height: 50px;
+  flex-shrink: 0;
+}
+.toolbar-title { flex: 1; font-size: 14px; font-weight: 600; color: var(--text); }
+
+.status-pill {
+  padding: 3px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.status-pill.running { background: #0a3320; color: var(--green); }
+.status-pill.done    { background: #0a3320; color: var(--green); }
+.status-pill.failed  { background: #2d1010; color: var(--red); }
+
+.run-btn {
+  padding: 7px 18px; background: #238636; color: #fff;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  transition: background 0.15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.run-btn:hover:not(:disabled) { background: #2ea043; }
+.run-btn:disabled { background: var(--surface2); color: var(--muted); cursor: not-allowed; border-color: var(--border); }
+
+/* ── Content scroll area ─────────────────────────────────────────────── */
+.content { flex: 1; overflow-y: auto; padding: 20px 22px 30px; display: flex; flex-direction: column; gap: 18px; }
+
+/* ── Config editor panel ─────────────────────────────────────────────── */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.panel-header {
+  padding: 8px 14px; background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.panel-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 4px; }
+.tab-btn {
+  padding: 4px 12px; background: none;
+  border: 1px solid transparent; border-radius: 4px;
+  color: var(--muted); cursor: pointer; font-size: 12px;
+  transition: all 0.1s;
+}
+.tab-btn:hover  { background: var(--surface); color: var(--text); }
+.tab-btn.active { background: var(--bg); border-color: var(--border); color: var(--text); }
+.config-editor {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: none; padding: 14px 16px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  resize: vertical; min-height: 200px; max-height: 55vh;
+  outline: none; tab-size: 4;
+}
+.config-editor:focus { background: #0a0e14; }
+
+/* ── Results panel ───────────────────────────────────────────────────── */
+.section-head {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+}
+.log-box {
+  background: #080c10; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 16px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.55; max-height: 280px; overflow-y: auto;
+  color: var(--muted); white-space: pre-wrap; word-break: break-all;
+}
+.log-box .l-cmd  { color: var(--accent); }
+.log-box .l-ok   { color: var(--green); }
+.log-box .l-err  { color: var(--red); }
+.log-box .l-info { color: var(--text); }
+
+/* ── Plot canvases ───────────────────────────────────────────────────── */
+.plots-grid {
+  display: flex; flex-direction: column; gap: 14px; margin-top: 16px;
+}
+.plot-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.plot-caption {
+  padding: 7px 12px; font-size: 11px; color: var(--muted);
+  font-family: var(--mono); border-top: 1px solid var(--border);
+}
+.plot-card canvas {
+  display: block; width: 100%; image-rendering: pixelated;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════ SIDEBAR ═══════════════════════════════ -->
+<div class="sidebar">
+  <div class="sb-logo">seiswg <span>WebGPU</span></div>
+
+  <div class="sb-section">Examples</div>
+  <button class="pb active" id="pb-forward" onclick="loadPreset('forward')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Forward (SH)
+    <span class="badge">200²</span>
+  </button>
+  <button class="pb" id="pb-spin" onclick="loadPreset('spin')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Spin (PSV+μ)
+    <span class="badge">200²</span>
+  </button>
+  <button class="pb" id="pb-adjoint" onclick="loadPreset('adjoint')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Adjoint
+    <span class="badge">201²</span>
+  </button>
+
+  <div class="sb-section" style="margin-top:12px;">Custom</div>
+  <button class="pb" id="pb-custom" onclick="loadPreset('custom')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1v14M1 8h14" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+    New Configuration
+  </button>
+
+  <div class="sb-custom-opts hidden" id="custom-opts">
+    <label>Base model type</label>
+    <select id="custom-model-type" onchange="onCustomModelChange()">
+      <option value="forward">Forward SH (200×200)</option>
+      <option value="spin">Spin PSV+μ (200×200)</option>
+      <option value="adjoint">Adjoint (201×201)</option>
+    </select>
+  </div>
+
+  <div style="flex:1"></div>
+  <div class="sb-hint">
+    All textareas are editable.<br>
+    Modify any config before running.<br><br>
+    Runs entirely in-browser via<br>
+    <strong>WebGPU + WebAssembly</strong>.<br><br>
+    Source format:<br>
+    <code>x z type f0 t0 ang amp</code>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ MAIN ══════════════════════════════════ -->
+<div class="main">
+  <div class="toolbar">
+    <span class="toolbar-title" id="preset-title">Forward (SH) — homogeneous 200×200, dx=100 m</span>
+    <span id="status-badge" class="hidden"></span>
+    <button class="run-btn" id="run-btn" onclick="runSim()">
+      <span id="run-icon">▶</span> Run Simulation
+    </button>
+  </div>
+
+  <div class="content">
+    <!-- Config Editor -->
+    <div class="panel" id="config-panel">
+      <div class="panel-header">
+        <span class="panel-label">Configuration</span>
+        <div id="config-tabs"></div>
+      </div>
+      <textarea class="config-editor" id="config-editor" spellcheck="false"></textarea>
+    </div>
+
+    <!-- Results -->
+    <div id="results-section" class="hidden">
+      <div class="section-head">
+        <span id="log-spinner" class="spinner hidden"></span>
+        Output Log
+      </div>
+      <div class="log-box" id="log-box"></div>
+
+      <div id="plots-container" class="hidden">
+        <div class="section-head" style="margin-top:20px;">Results</div>
+        <div class="plots-grid" id="plots-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ════════════════════════════════════════════════════════════════════
+// WASM initialization
+// ════════════════════════════════════════════════════════════════════
+import init, { run_simulation } from './pkg/seiswg.js';
+
+let wasmReady = false;
+(async () => {
+  try {
+    await init();
+    wasmReady = true;
+    appendLog('[ok] WebGPU + WASM module loaded.', 'l-ok');
+  } catch (e) {
+    appendLog('[err] Failed to load WASM: ' + e, 'l-err');
+  }
+})();
+
+// ════════════════════════════════════════════════════════════════════
+// Preset data
+// ════════════════════════════════════════════════════════════════════
+const PRESETS = {
+forward: {
+  title: 'Forward (SH) — homogeneous 200×200, dx=100 m',
+  model_type: 'forward',
+  tabs: ['config.ini','sources.dat','stations.dat'],
+  files: {
+'config.ini':
+`[workflow]
+mode = forward
+
+[solver]
+sh = yes
+psv = no
+nt = 1200
+dt = 0.015
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot    = 100
+combine_sources  = yes
+threads_per_block = 128
+
+[path]
+output        = output
+output_traces = output/traces
+model_init    = model
+sources       = sources.dat
+stations      = stations.dat
+`,
+'sources.dat': `10000.0  2000.0  0  1.0  1.0  0.0  1.0e10
+`,
+'stations.dat': ` 4000.0  1000.0
+ 5000.0  1000.0
+ 6000.0  1000.0
+ 7000.0  1000.0
+ 8000.0  1000.0
+ 9000.0  1000.0
+10000.0  1000.0
+11000.0  1000.0
+12000.0  1000.0
+13000.0  1000.0
+14000.0  1000.0
+15000.0  1000.0
+16000.0  1000.0
+`
+  }
+},
+
+spin: {
+  title: 'Spin (PSV+Micropolar) — homogeneous 200×200, dx=1 m',
+  model_type: 'spin',
+  tabs: ['config.ini','sources.dat','stations.dat'],
+  files: {
+'config.ini':
+`[workflow]
+mode = forward
+
+[solver]
+sh   = no
+psv  = yes
+spin = yes
+nt   = 2000
+dt   = 0.0001
+
+abs_top    = no
+abs_bottom = no
+abs_left   = no
+abs_right  = no
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot    = 200
+combine_sources  = yes
+threads_per_block = 128
+
+[path]
+output        = output
+output_traces = output
+model_true    = model
+sources       = sources.dat
+stations      = stations.dat
+`,
+'sources.dat': `100.0  50.0  0  50.0  0.05  0.0  1.0e10
+`,
+'stations.dat': ` 60.0   120.0
+ 80.0   120.0
+100.0   120.0
+120.0   120.0
+140.0   120.0
+ 60.0   150.0
+140.0   150.0
+`
+  }
+},
+
+adjoint: {
+  title: 'Adjoint — checkerboard Vs recovery, 201×201, dx=2400 m',
+  model_type: 'adjoint',
+  tabs: ['config.ini','config_true.ini','sources.dat','stations.dat'],
+  files: {
+'config.ini':
+`[workflow]
+mode = adjoint
+
+[solver]
+sh  = yes
+psv = no
+nt  = 4800
+dt  = 0.06
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+adj_interval = 10
+smooth       = 5.0
+combine_sources = no
+
+[path]
+output     = output
+model_init = model_init
+sources    = sources.dat
+stations   = stations.dat
+traces     = obs_traces
+`,
+'config_true.ini':
+`[workflow]
+mode = forward
+
+[solver]
+sh  = yes
+psv = no
+nt  = 4800
+dt  = 0.06
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot   = 0
+combine_sources = no
+
+[path]
+output         = obs_trash
+output_traces  = obs_traces
+model_init     = model_true
+sources        = sources.dat
+stations       = stations.dat
+`,
+'sources.dat':
+`  8.1231e+04  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  1.1446e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  1.4769e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  1.8092e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  2.1415e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  2.4738e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  2.8062e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  3.1385e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  3.4708e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  3.8031e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  4.1354e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+  4.4677e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
+`,
+'stations.dat': `  8.1231e+04  7.7538e+04
+  8.1231e+04  1.0708e+05
+  8.1231e+04  1.3662e+05
+  8.1231e+04  1.6615e+05
+  8.1231e+04  1.9569e+05
+  8.1231e+04  2.2523e+05
+  8.1231e+04  2.5477e+05
+  8.1231e+04  2.8431e+05
+  8.1231e+04  3.1385e+05
+  8.1231e+04  3.4338e+05
+  8.1231e+04  3.7292e+05
+  8.1231e+04  4.0246e+05
+  1.1446e+05  7.7538e+04
+  1.1446e+05  1.0708e+05
+  1.1446e+05  1.3662e+05
+  1.1446e+05  1.6615e+05
+  1.1446e+05  1.9569e+05
+  1.1446e+05  2.2523e+05
+  1.1446e+05  2.5477e+05
+  1.1446e+05  2.8431e+05
+  1.1446e+05  3.1385e+05
+  1.1446e+05  3.4338e+05
+  1.1446e+05  3.7292e+05
+  1.1446e+05  4.0246e+05
+  1.4769e+05  7.7538e+04
+  1.4769e+05  1.0708e+05
+  1.4769e+05  1.3662e+05
+  1.4769e+05  1.6615e+05
+  1.4769e+05  1.9569e+05
+  1.4769e+05  2.2523e+05
+  1.4769e+05  2.5477e+05
+  1.4769e+05  2.8431e+05
+  1.4769e+05  3.1385e+05
+  1.4769e+05  3.4338e+05
+  1.4769e+05  3.7292e+05
+  1.4769e+05  4.0246e+05
+  1.8092e+05  7.7538e+04
+  1.8092e+05  1.0708e+05
+  1.8092e+05  1.3662e+05
+  1.8092e+05  1.6615e+05
+  1.8092e+05  1.9569e+05
+  1.8092e+05  2.2523e+05
+  1.8092e+05  2.5477e+05
+  1.8092e+05  2.8431e+05
+  1.8092e+05  3.1385e+05
+  1.8092e+05  3.4338e+05
+  1.8092e+05  3.7292e+05
+  1.8092e+05  4.0246e+05
+  2.1415e+05  7.7538e+04
+  2.1415e+05  1.0708e+05
+  2.1415e+05  1.3662e+05
+  2.1415e+05  1.6615e+05
+  2.1415e+05  1.9569e+05
+  2.1415e+05  2.2523e+05
+  2.1415e+05  2.5477e+05
+  2.1415e+05  2.8431e+05
+  2.1415e+05  3.1385e+05
+  2.1415e+05  3.4338e+05
+  2.1415e+05  3.7292e+05
+  2.1415e+05  4.0246e+05
+  2.4738e+05  7.7538e+04
+  2.4738e+05  1.0708e+05
+  2.4738e+05  1.3662e+05
+  2.4738e+05  1.6615e+05
+  2.4738e+05  1.9569e+05
+  2.4738e+05  2.2523e+05
+  2.4738e+05  2.5477e+05
+  2.4738e+05  2.8431e+05
+  2.4738e+05  3.1385e+05
+  2.4738e+05  3.4338e+05
+  2.4738e+05  3.7292e+05
+  2.4738e+05  4.0246e+05
+  2.8062e+05  7.7538e+04
+  2.8062e+05  1.0708e+05
+  2.8062e+05  1.3662e+05
+  2.8062e+05  1.6615e+05
+  2.8062e+05  1.9569e+05
+  2.8062e+05  2.2523e+05
+  2.8062e+05  2.5477e+05
+  2.8062e+05  2.8431e+05
+  2.8062e+05  3.1385e+05
+  2.8062e+05  3.4338e+05
+  2.8062e+05  3.7292e+05
+  2.8062e+05  4.0246e+05
+  3.1385e+05  7.7538e+04
+  3.1385e+05  1.0708e+05
+  3.1385e+05  1.3662e+05
+  3.1385e+05  1.6615e+05
+  3.1385e+05  1.9569e+05
+  3.1385e+05  2.2523e+05
+  3.1385e+05  2.5477e+05
+  3.1385e+05  2.8431e+05
+  3.1385e+05  3.1385e+05
+  3.1385e+05  3.4338e+05
+  3.1385e+05  3.7292e+05
+  3.1385e+05  4.0246e+05
+  3.4708e+05  7.7538e+04
+  3.4708e+05  1.0708e+05
+  3.4708e+05  1.3662e+05
+  3.4708e+05  1.6615e+05
+  3.4708e+05  1.9569e+05
+  3.4708e+05  2.2523e+05
+  3.4708e+05  2.5477e+05
+  3.4708e+05  2.8431e+05
+  3.4708e+05  3.1385e+05
+  3.4708e+05  3.4338e+05
+  3.4708e+05  3.7292e+05
+  3.4708e+05  4.0246e+05
+  3.8031e+05  7.7538e+04
+  3.8031e+05  1.0708e+05
+  3.8031e+05  1.3662e+05
+  3.8031e+05  1.6615e+05
+  3.8031e+05  1.9569e+05
+  3.8031e+05  2.2523e+05
+  3.8031e+05  2.5477e+05
+  3.8031e+05  2.8431e+05
+  3.8031e+05  3.1385e+05
+  3.8031e+05  3.4338e+05
+  3.8031e+05  3.7292e+05
+  3.8031e+05  4.0246e+05
+  4.1354e+05  7.7538e+04
+  4.1354e+05  1.0708e+05
+  4.1354e+05  1.3662e+05
+  4.1354e+05  1.6615e+05
+  4.1354e+05  1.9569e+05
+  4.1354e+05  2.2523e+05
+  4.1354e+05  2.5477e+05
+  4.1354e+05  2.8431e+05
+  4.1354e+05  3.1385e+05
+  4.1354e+05  3.4338e+05
+  4.1354e+05  3.7292e+05
+  4.1354e+05  4.0246e+05
+  4.4677e+05  7.7538e+04
+  4.4677e+05  1.0708e+05
+  4.4677e+05  1.3662e+05
+  4.4677e+05  1.6615e+05
+  4.4677e+05  1.9569e+05
+  4.4677e+05  2.2523e+05
+  4.4677e+05  2.5477e+05
+  4.4677e+05  2.8431e+05
+  4.4677e+05  3.1385e+05
+  4.4677e+05  3.4338e+05
+  4.4677e+05  3.7292e+05
+  4.4677e+05  4.0246e+05
+`
+  }
+}
+};
+
+// custom = forward clone
+PRESETS.custom = JSON.parse(JSON.stringify(PRESETS.forward));
+PRESETS.custom.title = 'Custom Configuration';
+
+// ════════════════════════════════════════════════════════════════════
+// App state
+// ════════════════════════════════════════════════════════════════════
+let currentPreset = 'forward';
+let currentTab    = 'config.ini';
+let currentFiles  = {};
+
+// ════════════════════════════════════════════════════════════════════
+// Preset loading
+// ════════════════════════════════════════════════════════════════════
+function loadPreset(name) {
+  saveTab();
+  currentPreset = name;
+  const p = PRESETS[name];
+  currentFiles = Object.assign({}, p.files);
+
+  document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('pb-' + name);
+  if (btn) btn.classList.add('active');
+
+  document.getElementById('custom-opts').classList.toggle('hidden', name !== 'custom');
+  document.getElementById('preset-title').textContent = p.title;
+
+  const tabsEl = document.getElementById('config-tabs');
+  tabsEl.innerHTML = '';
+  p.tabs.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
+    b.textContent = t;
+    b.onclick = () => switchTab(t);
+    tabsEl.appendChild(b);
+  });
+
+  currentTab = 'config.ini';
+  document.getElementById('config-editor').value = currentFiles[currentTab] || '';
+
+  document.getElementById('results-section').classList.add('hidden');
+  document.getElementById('status-badge').classList.add('hidden');
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-icon').textContent = '▶';
+}
+
+function switchTab(name) {
+  saveTab();
+  currentTab = name;
+  document.getElementById('config-editor').value = currentFiles[name] || '';
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === name);
+  });
+}
+
+function saveTab() {
+  if (currentTab) {
+    currentFiles[currentTab] = document.getElementById('config-editor').value;
+  }
+}
+
+function onCustomModelChange() {
+  const mt = document.getElementById('custom-model-type').value;
+  const src = PRESETS[mt];
+  currentFiles = Object.assign({}, src.files);
+  currentTab = 'config.ini';
+
+  const tabsEl = document.getElementById('config-tabs');
+  tabsEl.innerHTML = '';
+  src.tabs.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
+    b.textContent = t;
+    b.onclick = () => switchTab(t);
+    tabsEl.appendChild(b);
+  });
+  document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
+  PRESETS.custom.tabs = src.tabs;
+  PRESETS.custom.model_type = mt;
+}
+
+// expose for onclick attributes
+window.loadPreset = loadPreset;
+window.onCustomModelChange = onCustomModelChange;
+
+// ════════════════════════════════════════════════════════════════════
+// Run simulation
+// ════════════════════════════════════════════════════════════════════
+async function runSim() {
+  saveTab();
+
+  if (!wasmReady) {
+    appendLog('[err] WASM module not loaded yet. Please wait.', 'l-err');
+    return;
+  }
+
+  const p = PRESETS[currentPreset];
+  const mt = currentPreset === 'custom'
+    ? document.getElementById('custom-model-type').value
+    : p.model_type;
+
+  // Reset UI
+  document.getElementById('results-section').classList.remove('hidden');
+  document.getElementById('plots-container').classList.add('hidden');
+  document.getElementById('plots-grid').innerHTML = '';
+  document.getElementById('log-box').innerHTML = '';
+  setStatus('running');
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-icon').textContent = '';
+
+  appendLog('[info] Starting ' + mt + ' simulation via WebGPU…', 'l-info');
+  appendLog('[info] Initializing GPU…', 'l-info');
+
+  try {
+    const result = await run_simulation(
+      mt,
+      currentFiles['config.ini']      || '',
+      currentFiles['sources.dat']     || '',
+      currentFiles['stations.dat']    || '',
+      currentFiles['config_true.ini'] || undefined,
+    );
+
+    appendLog('[ok] Simulation complete.', 'l-ok');
+    appendLog('[info] Rendering results…', 'l-info');
+    setStatus('done');
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-icon').textContent = '▶';
+    renderResults(result, mt);
+  } catch (e) {
+    appendLog('[err] ' + e, 'l-err');
+    setStatus('failed');
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-icon').textContent = '▶';
+  }
+}
+
+window.runSim = runSim;
+
+// ════════════════════════════════════════════════════════════════════
+// Rendering helpers
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Render all results (traces for forward/spin, kmu heatmap for adjoint).
+ */
+function renderResults(result, modelType) {
+  const grid = document.getElementById('plots-grid');
+  grid.innerHTML = '';
+
+  if (modelType === 'adjoint') {
+    const kmu = result.kmu;
+    if (!kmu) { appendLog('[warn] No kmu gradient in result.', 'l-err'); return; }
+    const nx = result.nx | 0;
+    const nz = result.nz | 0;
+    appendLog(`[info] Rendering kmu gradient (${nx}×${nz})…`, 'l-info');
+    const card = makePlotCard('kmu gradient — μ sensitivity kernel');
+    const canvas = card.querySelector('canvas');
+    renderHeatmap(canvas, kmu, nx, nz);
+    grid.appendChild(card);
+  } else {
+    const traces = result.traces;
+    if (!traces) { appendLog('[warn] No traces in result.', 'l-err'); return; }
+
+    const nt   = result.nt | 0;
+    const nrec = result.nrec | 0;
+    const dt   = result.dt;
+
+    // Collect keys, group by field prefix (e.g. "uy", "ux", "vx", …)
+    const keys = Object.keys(traces);
+    keys.sort();
+    const groups = {};
+    for (const k of keys) {
+      const prefix = k.replace(/_\d+$/, '');
+      if (!groups[prefix]) groups[prefix] = [];
+      groups[prefix].push(k);
+    }
+
+    appendLog(`[info] Rendering ${keys.length} traces (${nrec} receivers, nt=${nt}, dt=${dt.toExponential(3)} s)…`, 'l-info');
+
+    for (const [prefix, traceKeys] of Object.entries(groups)) {
+      traceKeys.sort();
+      const ntraces = traceKeys.length;
+      // Stack all traces into a 2-D array: [irec][it]
+      const data = traceKeys.map(k => traces[k]);
+      const card = makePlotCard(`field: ${prefix}  (${ntraces} receivers × ${nt} samples)`);
+      const canvas = card.querySelector('canvas');
+      renderWigglePlot(canvas, data, nt, dt);
+      grid.appendChild(card);
+    }
+  }
+
+  document.getElementById('plots-container').classList.remove('hidden');
+}
+
+/**
+ * Create a plot card element with a canvas and caption.
+ */
+function makePlotCard(caption) {
+  const card = document.createElement('div');
+  card.className = 'plot-card';
+  const canvas = document.createElement('canvas');
+  const cap = document.createElement('div');
+  cap.className = 'plot-caption';
+  cap.textContent = caption;
+  card.appendChild(canvas);
+  card.appendChild(cap);
+  return card;
+}
+
+// ── Wiggle plot ────────────────────────────────────────────────────────────
+/**
+ * Draw a multi-trace wiggle plot onto `canvas`.
+ * @param {HTMLCanvasElement} canvas
+ * @param {Float32Array[]} traces  – array of per-receiver time series, each length nt
+ * @param {number} nt              – number of time samples
+ * @param {number} dt              – time step (seconds)
+ */
+function renderWigglePlot(canvas, traces, nt, dt) {
+  const nrec  = traces.length;
+  const PAD   = { l: 56, r: 20, t: 20, b: 36 };
+  const W_REC = Math.max(30, Math.min(60, Math.floor(900 / nrec)));
+  const H_T   = Math.max(0.4, Math.min(1.2, 600 / nt));
+  const cw    = PAD.l + nrec * W_REC + PAD.r;
+  const ch    = PAD.t + Math.round(nt * H_T) + PAD.b;
+
+  canvas.width  = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, cw, ch);
+
+  // Find global max for normalization
+  let maxAbs = 1e-30;
+  for (const tr of traces) {
+    for (let i = 0; i < tr.length; i++) {
+      const v = Math.abs(tr[i]);
+      if (v > maxAbs) maxAbs = v;
+    }
+  }
+  const scale = (W_REC * 0.45) / maxAbs;
+
+  // Axis tick colour
+  ctx.strokeStyle = '#30363d';
+  ctx.fillStyle   = '#8b949e';
+  ctx.font        = '10px monospace';
+  ctx.textAlign   = 'right';
+
+  // Time axis ticks (left side)
+  const totalT = nt * dt;
+  const tickStep = niceStep(totalT / 5);
+  for (let t = 0; t <= totalT + 1e-12; t += tickStep) {
+    const y = PAD.t + (t / totalT) * (ch - PAD.t - PAD.b);
+    ctx.beginPath();
+    ctx.moveTo(PAD.l - 4, y);
+    ctx.lineTo(PAD.l,     y);
+    ctx.stroke();
+    ctx.fillText(t.toFixed(2) + 's', PAD.l - 6, y + 3);
+  }
+
+  // Receiver axis label
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8b949e';
+  for (let ir = 0; ir < nrec; ir++) {
+    const x = PAD.l + ir * W_REC + W_REC / 2;
+    ctx.fillText((ir + 1).toString(), x, ch - PAD.b + 14);
+  }
+  ctx.fillText('receiver index', PAD.l + (nrec * W_REC) / 2, ch - 4);
+
+  ctx.textAlign = 'center';
+  ctx.save();
+  ctx.translate(14, PAD.t + (ch - PAD.t - PAD.b) / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('time (s)', 0, 0);
+  ctx.restore();
+
+  // Draw traces
+  for (let ir = 0; ir < nrec; ir++) {
+    const cx = PAD.l + ir * W_REC + W_REC / 2;
+    const tr  = traces[ir];
+
+    // Fill positive
+    ctx.beginPath();
+    ctx.moveTo(cx, PAD.t);
+    for (let it = 0; it < nt; it++) {
+      const y = PAD.t + it * H_T;
+      const dx = Math.max(0, tr[it]) * scale;
+      ctx.lineTo(cx + dx, y);
+    }
+    ctx.lineTo(cx, PAD.t + (nt - 1) * H_T);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(88,166,255,0.35)';
+    ctx.fill();
+
+    // Wiggle line
+    ctx.beginPath();
+    for (let it = 0; it < nt; it++) {
+      const y  = PAD.t + it * H_T;
+      const dx = tr[it] * scale;
+      if (it === 0) ctx.moveTo(cx + dx, y);
+      else          ctx.lineTo(cx + dx, y);
+    }
+    ctx.strokeStyle = '#58a6ff';
+    ctx.lineWidth   = 0.8;
+    ctx.stroke();
+  }
+}
+
+// ── Heatmap plot ───────────────────────────────────────────────────────────
+/**
+ * Render a 2-D array as a diverging (RdBu) heatmap.
+ * @param {HTMLCanvasElement} canvas
+ * @param {Float32Array} data  – flat array of length nx*nz, row-major (ix * nz + iz)
+ * @param {number} nx
+ * @param {number} nz
+ */
+function renderHeatmap(canvas, data, nx, nz) {
+  // Scale up for display (max 800 px wide)
+  const scale = Math.max(1, Math.floor(800 / nx));
+  const W = nx * scale;
+  const H = nz * scale;
+
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx    = canvas.getContext('2d');
+  const imgDat = ctx.createImageData(W, H);
+  const pix    = imgDat.data;
+
+  // Symmetric colour limit (95th percentile)
+  const sorted = Float32Array.from(data).sort();
+  const q95  = sorted[Math.floor(sorted.length * 0.95)];
+  const q05  = sorted[Math.floor(sorted.length * 0.05)];
+  const vmax = Math.max(Math.abs(q95), Math.abs(q05), 1e-30);
+
+  for (let ix = 0; ix < nx; ix++) {
+    for (let iz = 0; iz < nz; iz++) {
+      const v  = data[ix * nz + iz];
+      const t  = Math.max(-1, Math.min(1, v / vmax));          // –1 … +1
+      const [r, g, b] = rdbu(t);
+      for (let si = 0; si < scale; si++) {
+        for (let sj = 0; sj < scale; sj++) {
+          const px = ((iz * scale + sj) * W + ix * scale + si) * 4;
+          pix[px    ] = r;
+          pix[px + 1] = g;
+          pix[px + 2] = b;
+          pix[px + 3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(imgDat, 0, 0);
+
+  // Colour-bar annotations
+  ctx.font      = '11px monospace';
+  ctx.fillStyle = '#e6edf3';
+  ctx.textAlign = 'left';
+  ctx.fillText(`min: ${q05.toExponential(2)}`, 6, H - 20);
+  ctx.fillText(`max: ${q95.toExponential(2)}`, 6, H - 6);
+  ctx.fillText(`nx=${nx}  nz=${nz}`, W - 110, H - 6);
+}
+
+/**
+ * RdBu diverging colormap: t ∈ [–1, +1] → [r, g, b] each 0–255.
+ * Blue = negative, white = zero, red = positive.
+ */
+function rdbu(t) {
+  // Key stops: –1=blue, 0=white, +1=red
+  if (t < 0) {
+    const s = -t;   // 0..1
+    const r = Math.round(lerp(255, 33,  s));
+    const g = Math.round(lerp(255, 102, s));
+    const b = Math.round(lerp(255, 172, s));
+    return [r, g, b];
+  } else {
+    const s = t;    // 0..1
+    const r = Math.round(lerp(255, 178, s));
+    const g = Math.round(lerp(255, 24,  s));
+    const b = Math.round(lerp(255, 43,  s));
+    return [r, g, b];
+  }
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+/**
+ * Compute a "nice" step size for axis ticks.
+ */
+function niceStep(raw) {
+  const exp = Math.floor(Math.log10(raw));
+  const frac = raw / Math.pow(10, exp);
+  let nice;
+  if      (frac < 1.5) nice = 1;
+  else if (frac < 3.5) nice = 2;
+  else if (frac < 7.5) nice = 5;
+  else                 nice = 10;
+  return nice * Math.pow(10, exp);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UI helpers
+// ════════════════════════════════════════════════════════════════════
+function setStatus(s) {
+  const badge = document.getElementById('status-badge');
+  badge.className = `status-pill ${s}`;
+  badge.classList.remove('hidden');
+  const spin = document.getElementById('log-spinner');
+  spin.classList.toggle('hidden', s !== 'running');
+  const labels = { running: '⟳ Running', done: '✓ Done', failed: '✗ Failed' };
+  badge.textContent = labels[s] || s;
+}
+
+function appendLog(text, cls) {
+  const box = document.getElementById('log-box');
+  if (!text) return;
+  const span = document.createElement('span');
+  span.className = cls || '';
+  if (text.startsWith('$ '))        span.className = 'l-cmd';
+  else if (/error|failed/i.test(text)) span.className = 'l-err';
+  span.textContent = text;
+  box.appendChild(span);
+  box.appendChild(document.createTextNode('\n'));
+  box.scrollTop = box.scrollHeight;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════════════
+// Show log box immediately so the WASM ready message is visible
+document.getElementById('results-section').classList.remove('hidden');
+
+loadPreset('forward');
+</script>
+</body>
+</html>

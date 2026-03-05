@@ -124,6 +124,20 @@ pub fn load(config_path: &Path) -> Result<Config> {
         .parent()
         .unwrap_or_else(|| Path::new("."));
 
+    parse_ini(&ini, base)
+}
+
+/// Parse a config from an INI string, with paths resolved relative to `base_dir`.
+pub fn load_from_str(text: &str, base_dir: &str) -> Result<Config> {
+    let mut ini = Ini::new();
+    ini.read(text.to_string())
+        .map_err(|e| anyhow!("Cannot parse config: {}", e))?;
+    let base = Path::new(base_dir);
+    parse_ini(&ini, base)
+}
+
+fn parse_ini(ini: &Ini, base: &Path) -> Result<Config> {
+
     // ── workflow ────────────────────────────────────────────────────────────
     let workflow = get_required(&ini, "workflow", "mode")?
         .trim()

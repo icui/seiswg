@@ -200,6 +200,70 @@ Traces include `ux`, `uz`, `ry` (total micro-rotation), and `yi` (isolated rotat
 
 ---
 
+## Tests
+
+Integration tests run the release binary against all three bundled examples and
+compare output against golden fixtures stored in `tests/fixtures/`.
+
+```bash
+# build release binary first, then run tests sequentially (avoids concurrent
+# GPU access on single-GPU machines)
+cargo test --release -- --test-threads 1
+```
+
+### Updating fixtures
+
+After an intentional solver change, regenerate the reference files:
+
+```bash
+./run_example.bash   # re-runs all three examples
+cp examples/forward/output/proc000100_vy.bin      tests/fixtures/forward/
+cp examples/forward/output/traces/uy_000000.npy   tests/fixtures/forward/
+cp examples/spin/output/proc000200_vx.bin         tests/fixtures/spin/
+cp examples/spin/output/ry_000000.npy             tests/fixtures/spin/
+cp examples/adjoint/output/proc000000_kmu.bin     tests/fixtures/adjoint/
+```
+
+---
+
+## Browser / GitHub Pages
+
+The solver can run entirely in-browser via **WebAssembly + WebGPU** — no
+server required.  The static app lives in `web/index.html`.
+
+### Build the WASM package
+
+```bash
+# install wasm-pack (one-time)
+cargo install wasm-pack --locked
+
+# compile to WASM and output JS glue into web/pkg/
+wasm-pack build --release --target web --out-dir web/pkg
+```
+
+### Serve locally
+
+Browsers block ES-module imports and WASM loading from `file://` URLs, so
+you need a local HTTP server:
+
+```bash
+# Python (no extra install needed)
+python3 -m http.server 8080 --directory web
+
+# or: Node.js
+npx serve web
+```
+
+Then open <http://localhost:8080> in a browser that supports WebGPU
+(Chrome ≥ 113, Edge ≥ 113, or Safari ≥ 18).
+
+### Deploy to GitHub Pages
+
+Push to `main` — the `.github/workflows/pages.yml` workflow builds the WASM
+package and deploys `web/` automatically via GitHub Actions.
+
+---
+
 ## Physics
 
 The solver implements a 4th-order staggered-grid finite-difference scheme in space
