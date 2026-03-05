@@ -8,12 +8,13 @@
 pub mod config;
 pub mod solver;
 
-use std::collections::HashMap;
+#[cfg(target_arch = "wasm32")]
 use solver::Vfs;
 
-// ── Shared model-generation helpers (used by both WASM lib and the native bin) ──
+// ── WASM-only model-generation helpers ──────────────────────────────────────
 
 /// Encode a seispie model binary: int32 npt header + npt × f32 payload.
+#[cfg(target_arch = "wasm32")]
 fn make_bin(data: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + data.len() * 4);
     out.extend_from_slice(&(data.len() as i32).to_le_bytes());
@@ -22,6 +23,7 @@ fn make_bin(data: &[f32]) -> Vec<u8> {
 }
 
 /// Generate in-memory model files for the `forward` example.
+#[cfg(target_arch = "wasm32")]
 fn gen_forward_vfs() -> Vfs {
     const NX: usize = 200;
     const NZ: usize = 200;
@@ -45,6 +47,7 @@ fn gen_forward_vfs() -> Vfs {
 }
 
 /// Generate in-memory model files for the `spin` example.
+#[cfg(target_arch = "wasm32")]
 fn gen_spin_vfs() -> Vfs {
     const NX: usize = 200;
     const NZ: usize = 200;
@@ -71,6 +74,7 @@ fn gen_spin_vfs() -> Vfs {
 }
 
 /// Generate in-memory model files for the `adjoint` example.
+#[cfg(target_arch = "wasm32")]
 fn gen_adjoint_vfs() -> (Vfs, Vfs) {
     const NX: usize = 201;
     const NZ: usize = 201;

@@ -14,7 +14,9 @@ use std::path::Path;
 /// Virtual file system: maps virtual path strings to byte contents.
 pub type Vfs = HashMap<String, Vec<u8>>;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -558,15 +560,19 @@ fn dispatch_n(
 // ──────────────────────────────────────────────────────────────────────────
 impl Solver {
     /// Number of grid points in the model.
+    #[cfg(target_arch = "wasm32")]
     pub fn npt(&self) -> u32 { self.npt }
 
     /// Number of grid columns (x direction).
+    #[cfg(target_arch = "wasm32")]
     pub fn nx(&self) -> u32 { self.params.nx }
 
     /// Number of grid rows (z direction).
+    #[cfg(target_arch = "wasm32")]
     pub fn nz(&self) -> u32 { self.params.nz }
 
     /// Number of receiver stations.
+    #[cfg(target_arch = "wasm32")]
     pub fn nrec(&self) -> usize { self.stations.len() }
 
     pub async fn new(config: Config, vfs: &Vfs) -> Result<Self> {
@@ -582,7 +588,7 @@ impl Solver {
             force_fallback_adapter: false,
         })
         .await
-        .ok_or_else(|| anyhow::anyhow!("No WebGPU adapter found"))?;;
+        .ok_or_else(|| anyhow::anyhow!("No WebGPU adapter found"))?;
 
         log::info!("GPU adapter: {:?}", adapter.get_info());
 
@@ -687,7 +693,7 @@ impl Solver {
         drop(fields_init);
 
         // ── Load sources ─────────────────────────────────────────────────
-        let src_table = load_text_table_vfs(vfs, &config.paths.sources)?;;
+        let src_table = load_text_table_vfs(vfs, &config.paths.sources)?;
         let nsrc = src_table.len() as u32;
         let nt   = config.solver.grid.nt;
         let dt   = config.solver.grid.dt;

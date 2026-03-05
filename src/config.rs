@@ -128,6 +128,7 @@ pub fn load(config_path: &Path) -> Result<Config> {
 }
 
 /// Parse a config from an INI string, with paths resolved relative to `base_dir`.
+#[cfg(target_arch = "wasm32")]
 pub fn load_from_str(text: &str, base_dir: &str) -> Result<Config> {
     let mut ini = Ini::new();
     ini.read(text.to_string())
