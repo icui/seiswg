@@ -164,7 +164,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
   font-family: var(--mono); border-top: 1px solid var(--border);
 }
 .plot-card canvas {
-  display: block; width: 100%; image-rendering: pixelated;
+  display: block; max-width: 100%; image-rendering: pixelated;
 }
 
 /* ── Spinner ─────────────────────────────────────────────────────────── */
@@ -281,334 +281,50 @@ let wasmReady = false;
 })();
 
 // ════════════════════════════════════════════════════════════════════
-// Preset data
+// Preset data — file contents are fetched lazily from GitHub
 // ════════════════════════════════════════════════════════════════════
-const PRESETS = {
-forward: {
-  title: 'Forward (SH) — homogeneous 200×200, dx=100 m',
-  model_type: 'forward',
-  tabs: ['config.ini','sources.dat','stations.dat'],
-  files: {
-'config.ini':
-`[workflow]
-mode = forward
+const RAW_BASE = 'https://raw.githubusercontent.com/icui/seiswg/main/examples/';
 
-[solver]
-sh = yes
-psv = no
-nt = 1200
-dt = 0.015
+// Cache: 'forward/config.ini' → text content
+const fileCache = {};
 
-abs_top    = no
-abs_bottom = yes
-abs_left   = yes
-abs_right  = yes
-abs_width  = 20
-abs_alpha  = 0.015
-
-save_snapshot    = 100
-combine_sources  = yes
-threads_per_block = 128
-
-[path]
-output        = output
-output_traces = output/traces
-model_init    = model
-sources       = sources.dat
-stations      = stations.dat
-`,
-'sources.dat': `10000.0  2000.0  0  1.0  1.0  0.0  1.0e10
-`,
-'stations.dat': ` 4000.0  1000.0
- 5000.0  1000.0
- 6000.0  1000.0
- 7000.0  1000.0
- 8000.0  1000.0
- 9000.0  1000.0
-10000.0  1000.0
-11000.0  1000.0
-12000.0  1000.0
-13000.0  1000.0
-14000.0  1000.0
-15000.0  1000.0
-16000.0  1000.0
-`
-  }
-},
-
-spin: {
-  title: 'Spin (PSV+Micropolar) — homogeneous 200×200, dx=1 m',
-  model_type: 'spin',
-  tabs: ['config.ini','sources.dat','stations.dat'],
-  files: {
-'config.ini':
-`[workflow]
-mode = forward
-
-[solver]
-sh   = no
-psv  = yes
-spin = yes
-nt   = 2000
-dt   = 0.0001
-
-abs_top    = no
-abs_bottom = no
-abs_left   = no
-abs_right  = no
-abs_width  = 20
-abs_alpha  = 0.015
-
-save_snapshot    = 200
-combine_sources  = yes
-threads_per_block = 128
-
-[path]
-output        = output
-output_traces = output
-model_true    = model
-sources       = sources.dat
-stations      = stations.dat
-`,
-'sources.dat': `100.0  50.0  0  50.0  0.05  0.0  1.0e10
-`,
-'stations.dat': ` 60.0   120.0
- 80.0   120.0
-100.0   120.0
-120.0   120.0
-140.0   120.0
- 60.0   150.0
-140.0   150.0
-`
-  }
-},
-
-adjoint: {
-  title: 'Adjoint — checkerboard Vs recovery, 201×201, dx=2400 m',
-  model_type: 'adjoint',
-  tabs: ['config.ini','config_true.ini','sources.dat','stations.dat'],
-  files: {
-'config.ini':
-`[workflow]
-mode = adjoint
-
-[solver]
-sh  = yes
-psv = no
-nt  = 4800
-dt  = 0.06
-
-abs_top    = no
-abs_bottom = yes
-abs_left   = yes
-abs_right  = yes
-abs_width  = 20
-abs_alpha  = 0.015
-
-adj_interval = 10
-smooth       = 5.0
-combine_sources = no
-
-[path]
-output     = output
-model_init = model_init
-sources    = sources.dat
-stations   = stations.dat
-traces     = obs_traces
-`,
-'config_true.ini':
-`[workflow]
-mode = forward
-
-[solver]
-sh  = yes
-psv = no
-nt  = 4800
-dt  = 0.06
-
-abs_top    = no
-abs_bottom = yes
-abs_left   = yes
-abs_right  = yes
-abs_width  = 20
-abs_alpha  = 0.015
-
-save_snapshot   = 0
-combine_sources = no
-
-[path]
-output         = obs_trash
-output_traces  = obs_traces
-model_init     = model_true
-sources        = sources.dat
-stations       = stations.dat
-`,
-'sources.dat':
-`  8.1231e+04  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  1.1446e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  1.4769e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  1.8092e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  2.1415e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  2.4738e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  2.8062e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  3.1385e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  3.4708e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  3.8031e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  4.1354e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-  4.4677e+05  4.8000e+04   0     0.020   0.0     0.0   1.0e10
-`,
-'stations.dat': `  8.1231e+04  7.7538e+04
-  8.1231e+04  1.0708e+05
-  8.1231e+04  1.3662e+05
-  8.1231e+04  1.6615e+05
-  8.1231e+04  1.9569e+05
-  8.1231e+04  2.2523e+05
-  8.1231e+04  2.5477e+05
-  8.1231e+04  2.8431e+05
-  8.1231e+04  3.1385e+05
-  8.1231e+04  3.4338e+05
-  8.1231e+04  3.7292e+05
-  8.1231e+04  4.0246e+05
-  1.1446e+05  7.7538e+04
-  1.1446e+05  1.0708e+05
-  1.1446e+05  1.3662e+05
-  1.1446e+05  1.6615e+05
-  1.1446e+05  1.9569e+05
-  1.1446e+05  2.2523e+05
-  1.1446e+05  2.5477e+05
-  1.1446e+05  2.8431e+05
-  1.1446e+05  3.1385e+05
-  1.1446e+05  3.4338e+05
-  1.1446e+05  3.7292e+05
-  1.1446e+05  4.0246e+05
-  1.4769e+05  7.7538e+04
-  1.4769e+05  1.0708e+05
-  1.4769e+05  1.3662e+05
-  1.4769e+05  1.6615e+05
-  1.4769e+05  1.9569e+05
-  1.4769e+05  2.2523e+05
-  1.4769e+05  2.5477e+05
-  1.4769e+05  2.8431e+05
-  1.4769e+05  3.1385e+05
-  1.4769e+05  3.4338e+05
-  1.4769e+05  3.7292e+05
-  1.4769e+05  4.0246e+05
-  1.8092e+05  7.7538e+04
-  1.8092e+05  1.0708e+05
-  1.8092e+05  1.3662e+05
-  1.8092e+05  1.6615e+05
-  1.8092e+05  1.9569e+05
-  1.8092e+05  2.2523e+05
-  1.8092e+05  2.5477e+05
-  1.8092e+05  2.8431e+05
-  1.8092e+05  3.1385e+05
-  1.8092e+05  3.4338e+05
-  1.8092e+05  3.7292e+05
-  1.8092e+05  4.0246e+05
-  2.1415e+05  7.7538e+04
-  2.1415e+05  1.0708e+05
-  2.1415e+05  1.3662e+05
-  2.1415e+05  1.6615e+05
-  2.1415e+05  1.9569e+05
-  2.1415e+05  2.2523e+05
-  2.1415e+05  2.5477e+05
-  2.1415e+05  2.8431e+05
-  2.1415e+05  3.1385e+05
-  2.1415e+05  3.4338e+05
-  2.1415e+05  3.7292e+05
-  2.1415e+05  4.0246e+05
-  2.4738e+05  7.7538e+04
-  2.4738e+05  1.0708e+05
-  2.4738e+05  1.3662e+05
-  2.4738e+05  1.6615e+05
-  2.4738e+05  1.9569e+05
-  2.4738e+05  2.2523e+05
-  2.4738e+05  2.5477e+05
-  2.4738e+05  2.8431e+05
-  2.4738e+05  3.1385e+05
-  2.4738e+05  3.4338e+05
-  2.4738e+05  3.7292e+05
-  2.4738e+05  4.0246e+05
-  2.8062e+05  7.7538e+04
-  2.8062e+05  1.0708e+05
-  2.8062e+05  1.3662e+05
-  2.8062e+05  1.6615e+05
-  2.8062e+05  1.9569e+05
-  2.8062e+05  2.2523e+05
-  2.8062e+05  2.5477e+05
-  2.8062e+05  2.8431e+05
-  2.8062e+05  3.1385e+05
-  2.8062e+05  3.4338e+05
-  2.8062e+05  3.7292e+05
-  2.8062e+05  4.0246e+05
-  3.1385e+05  7.7538e+04
-  3.1385e+05  1.0708e+05
-  3.1385e+05  1.3662e+05
-  3.1385e+05  1.6615e+05
-  3.1385e+05  1.9569e+05
-  3.1385e+05  2.2523e+05
-  3.1385e+05  2.5477e+05
-  3.1385e+05  2.8431e+05
-  3.1385e+05  3.1385e+05
-  3.1385e+05  3.4338e+05
-  3.1385e+05  3.7292e+05
-  3.1385e+05  4.0246e+05
-  3.4708e+05  7.7538e+04
-  3.4708e+05  1.0708e+05
-  3.4708e+05  1.3662e+05
-  3.4708e+05  1.6615e+05
-  3.4708e+05  1.9569e+05
-  3.4708e+05  2.2523e+05
-  3.4708e+05  2.5477e+05
-  3.4708e+05  2.8431e+05
-  3.4708e+05  3.1385e+05
-  3.4708e+05  3.4338e+05
-  3.4708e+05  3.7292e+05
-  3.4708e+05  4.0246e+05
-  3.8031e+05  7.7538e+04
-  3.8031e+05  1.0708e+05
-  3.8031e+05  1.3662e+05
-  3.8031e+05  1.6615e+05
-  3.8031e+05  1.9569e+05
-  3.8031e+05  2.2523e+05
-  3.8031e+05  2.5477e+05
-  3.8031e+05  2.8431e+05
-  3.8031e+05  3.1385e+05
-  3.8031e+05  3.4338e+05
-  3.8031e+05  3.7292e+05
-  3.8031e+05  4.0246e+05
-  4.1354e+05  7.7538e+04
-  4.1354e+05  1.0708e+05
-  4.1354e+05  1.3662e+05
-  4.1354e+05  1.6615e+05
-  4.1354e+05  1.9569e+05
-  4.1354e+05  2.2523e+05
-  4.1354e+05  2.5477e+05
-  4.1354e+05  2.8431e+05
-  4.1354e+05  3.1385e+05
-  4.1354e+05  3.4338e+05
-  4.1354e+05  3.7292e+05
-  4.1354e+05  4.0246e+05
-  4.4677e+05  7.7538e+04
-  4.4677e+05  1.0708e+05
-  4.4677e+05  1.3662e+05
-  4.4677e+05  1.6615e+05
-  4.4677e+05  1.9569e+05
-  4.4677e+05  2.2523e+05
-  4.4677e+05  2.5477e+05
-  4.4677e+05  2.8431e+05
-  4.4677e+05  3.1385e+05
-  4.4677e+05  3.4338e+05
-  4.4677e+05  3.7292e+05
-  4.4677e+05  4.0246e+05
-`
-  }
+async function fetchPresetFiles(name) {
+  const tabs = PRESETS[name].tabs;
+  const entries = await Promise.all(tabs.map(async fname => {
+    const key = name + '/' + fname;
+    if (!fileCache[key]) {
+      const r = await fetch(RAW_BASE + key);
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + key);
+      fileCache[key] = await r.text();
+    }
+    return [fname, fileCache[key]];
+  }));
+  return Object.fromEntries(entries);
 }
+
+const PRESETS = {
+  forward: {
+    title: 'Forward (SH) — homogeneous 200×200, dx=100 m',
+    model_type: 'forward',
+    tabs: ['config.ini', 'sources.dat', 'stations.dat'],
+  },
+  spin: {
+    title: 'Spin (PSV+Micropolar) — homogeneous 200×200, dx=1 m',
+    model_type: 'spin',
+    tabs: ['config.ini', 'sources.dat', 'stations.dat'],
+  },
+  adjoint: {
+    title: 'Adjoint — checkerboard Vs recovery, 201×201, dx=2400 m',
+    model_type: 'adjoint',
+    tabs: ['config.ini', 'config_true.ini', 'sources.dat', 'stations.dat'],
+  },
 };
 
-// custom = forward clone
-PRESETS.custom = JSON.parse(JSON.stringify(PRESETS.forward));
-PRESETS.custom.title = 'Custom Configuration';
+PRESETS.custom = {
+  title: 'Custom Configuration',
+  model_type: 'forward',
+  tabs: ['config.ini','sources.dat','stations.dat'],
+};
 
 // ════════════════════════════════════════════════════════════════════
 // App state
@@ -616,23 +332,29 @@ PRESETS.custom.title = 'Custom Configuration';
 let currentPreset = 'forward';
 let currentTab    = 'config.ini';
 let currentFiles  = {};
+let animTimers    = [];  // setInterval IDs for wavefield animations
+
+function stopAllAnimations() {
+  for (const id of animTimers) clearInterval(id);
+  animTimers = [];
+}
 
 // ════════════════════════════════════════════════════════════════════
 // Preset loading
 // ════════════════════════════════════════════════════════════════════
-function loadPreset(name) {
+async function loadPreset(name) {
   saveTab();
   currentPreset = name;
   const p = PRESETS[name];
-  currentFiles = Object.assign({}, p.files);
 
+  // Sidebar highlight + custom opts
   document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('pb-' + name);
   if (btn) btn.classList.add('active');
-
   document.getElementById('custom-opts').classList.toggle('hidden', name !== 'custom');
   document.getElementById('preset-title').textContent = p.title;
 
+  // Build tab bar immediately (content loaded below)
   const tabsEl = document.getElementById('config-tabs');
   tabsEl.innerHTML = '';
   p.tabs.forEach(t => {
@@ -644,10 +366,31 @@ function loadPreset(name) {
   });
 
   currentTab = 'config.ini';
-  document.getElementById('config-editor').value = currentFiles[currentTab] || '';
-
   document.getElementById('results-section').classList.add('hidden');
   document.getElementById('status-badge').classList.add('hidden');
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-icon').textContent = '';
+
+  // For custom, base files come from whichever model type is selected
+  const fetchName = name === 'custom'
+    ? document.getElementById('custom-model-type').value
+    : name;
+
+  // Show loading placeholder
+  document.getElementById('config-editor').value = '# loading from GitHub…';
+
+  try {
+    currentFiles = await fetchPresetFiles(fetchName);
+    // For custom, keep a live copy the user can edit independently
+    if (name === 'custom') currentFiles = Object.assign({}, currentFiles);
+  } catch (e) {
+    document.getElementById('config-editor').value = '# Error fetching files: ' + e.message;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-icon').textContent = '▶';
+    return;
+  }
+
+  document.getElementById('config-editor').value = currentFiles[currentTab] || '';
   document.getElementById('run-btn').disabled = false;
   document.getElementById('run-icon').textContent = '▶';
 }
@@ -667,10 +410,12 @@ function saveTab() {
   }
 }
 
-function onCustomModelChange() {
+async function onCustomModelChange() {
   const mt = document.getElementById('custom-model-type').value;
   const src = PRESETS[mt];
-  currentFiles = Object.assign({}, src.files);
+  // Update custom preset metadata to match the chosen base type
+  PRESETS.custom.tabs       = src.tabs.slice();
+  PRESETS.custom.model_type = mt;
   currentTab = 'config.ini';
 
   const tabsEl = document.getElementById('config-tabs');
@@ -682,9 +427,19 @@ function onCustomModelChange() {
     b.onclick = () => switchTab(t);
     tabsEl.appendChild(b);
   });
+
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-icon').textContent = '';
+  document.getElementById('config-editor').value = '# loading from GitHub…';
+
+  try {
+    currentFiles = Object.assign({}, await fetchPresetFiles(mt));
+  } catch (e) {
+    document.getElementById('config-editor').value = '# Error: ' + e.message;
+  }
   document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
-  PRESETS.custom.tabs = src.tabs;
-  PRESETS.custom.model_type = mt;
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-icon').textContent = '▶';
 }
 
 // expose for onclick attributes
@@ -708,6 +463,7 @@ async function runSim() {
     : p.model_type;
 
   // Reset UI
+  stopAllAnimations();
   document.getElementById('results-section').classList.remove('hidden');
   document.getElementById('plots-container').classList.add('hidden');
   document.getElementById('plots-grid').innerHTML = '';
@@ -787,10 +543,16 @@ function renderResults(result, modelType) {
 
     for (const [prefix, traceKeys] of Object.entries(groups)) {
       traceKeys.sort();
-      const ntraces = traceKeys.length;
-      // Stack all traces into a 2-D array: [irec][it]
-      const data = traceKeys.map(k => traces[k]);
-      const card = makePlotCard(`field: ${prefix}  (${ntraces} receivers × ${nt} samples)`);
+      // Each traces[k] is flat [nrec * nt] with layout data[ir*nt + it].
+      // Split into individual per-receiver traces of length nt.
+      const data = [];
+      for (const k of traceKeys) {
+        const flat = traces[k];
+        for (let ir = 0; ir < nrec; ir++) {
+          data.push(flat.subarray(ir * nt, (ir + 1) * nt));
+        }
+      }
+      const card = makePlotCard(`field: ${prefix}  (${data.length} trace(s) × ${nt} samples)`);
       const canvas = card.querySelector('canvas');
       renderWigglePlot(canvas, data, nt, dt);
       grid.appendChild(card);
@@ -798,6 +560,21 @@ function renderResults(result, modelType) {
   }
 
   document.getElementById('plots-container').classList.remove('hidden');
+
+  // Animated wavefield snapshots
+  if (result.snapshots && result.snap_nframes > 0) {
+    const nx      = result.nx | 0;
+    const nz      = result.nz | 0;
+    const nframes = result.snap_nframes | 0;
+    const fields  = Object.entries(result.snapshots).sort(([a],[b]) => a < b ? -1 : 1);
+    appendLog(`[info] Animating ${fields.length} wavefield(s) · ${nframes} frame(s) · ${nx}\u00d7${nz}\u2026`, 'l-info');
+    for (const [field, data] of fields) {
+      const card   = makePlotCard(`wavefield: ${field}  (${nframes} frames \u00b7 ${nx}\u00d7${nz})`);
+      const canvas = card.querySelector('canvas');
+      renderSnapshotAnimation(canvas, data, nframes, nx, nz);
+      grid.appendChild(card);
+    }
+  }
 }
 
 /**
@@ -911,6 +688,63 @@ function renderWigglePlot(canvas, traces, nt, dt) {
     ctx.lineWidth   = 0.8;
     ctx.stroke();
   }
+}
+
+// ── Snapshot animation ────────────────────────────────────────────────────
+/**
+ * Animate wavefield frames on `canvas` at ~10 fps.
+ * @param {HTMLCanvasElement} canvas
+ * @param {Float32Array} flatData  – all frames concatenated, length = nframes * nx * nz
+ * @param {number} nframes
+ * @param {number} nx              – fast axis (columns)
+ * @param {number} nz              – slow axis (rows)
+ */
+function renderSnapshotAnimation(canvas, flatData, nframes, nx, nz) {
+  const npt   = nx * nz;
+  const SCALE = Math.max(1, Math.floor(600 / Math.max(nx, nz)));
+  const W     = nx * SCALE;
+  const H     = nz * SCALE;
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // Global symmetric colour limit across all frames
+  let vmax = 1e-30;
+  for (let i = 0; i < flatData.length; i++) {
+    const v = Math.abs(flatData[i]);
+    if (v > vmax) vmax = v;
+  }
+
+  let frame = 0;
+  const draw = () => {
+    const off    = frame * npt;
+    const imgDat = ctx.createImageData(W, H);
+    const pix    = imgDat.data;
+    for (let ix = 0; ix < nx; ix++) {
+      for (let iz = 0; iz < nz; iz++) {
+        const v = flatData[off + ix * nz + iz];
+        const t = Math.max(-1, Math.min(1, v / vmax));
+        const [r, g, b] = rdbu(t);
+        for (let si = 0; si < SCALE; si++) {
+          for (let sj = 0; sj < SCALE; sj++) {
+            const px = ((iz * SCALE + sj) * W + ix * SCALE + si) * 4;
+            pix[px] = r; pix[px+1] = g; pix[px+2] = b; pix[px+3] = 255;
+          }
+        }
+      }
+    }
+    ctx.putImageData(imgDat, 0, 0);
+    // Frame counter overlay
+    ctx.fillStyle = 'rgba(13,17,23,0.7)';
+    ctx.fillRect(4, 4, 88, 16);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`frame ${frame + 1} / ${nframes}`, 8, 16);
+    frame = (frame + 1) % nframes;
+  };
+  draw();
+  animTimers.push(setInterval(draw, 100)); // 10 fps
 }
 
 // ── Heatmap plot ───────────────────────────────────────────────────────────
@@ -1035,6 +869,7 @@ function appendLog(text, cls) {
 // Show log box immediately so the WASM ready message is visible
 document.getElementById('results-section').classList.remove('hidden');
 
+// Kick off initial preset load (async — fetches from GitHub)
 loadPreset('forward');
 </script>
 </body>

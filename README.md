@@ -237,9 +237,22 @@ server required.  The static app lives in `web/index.html`.
 # install wasm-pack (one-time)
 cargo install wasm-pack --locked
 
+# add wasm32 target (one-time)
+rustup target add wasm32-unknown-unknown
+
 # compile to WASM and output JS glue into web/pkg/
 wasm-pack build --release --target web --out-dir web/pkg
 ```
+
+> **Homebrew Rust conflict** — if Rust was installed via `brew install rust`,
+> Homebrew's `rustc` shadows rustup's and `wasm-pack` will complain about a
+> missing sysroot.  Prepend the rustup toolchain to `PATH` for the duration
+> of the build:
+> ```bash
+> export PATH="$(rustup which rustc | xargs dirname):$PATH"
+> wasm-pack build --release --target web --out-dir web/pkg
+> ```
+> To make this permanent, add the `export PATH=…` line to your `~/.zprofile`.
 
 ### Serve locally
 

@@ -232,6 +232,8 @@ mod wasm_api {
             "forward" => {
                 let nrec = slv.nrec();
                 let npt  = slv.npt();
+                let nx   = slv.nx();
+                let nz   = slv.nz();
                 let out = slv.run_forward().await.map_err(err)?;
                 let traces_obj = Object::new();
                 for (path, bytes) in &out {
@@ -248,6 +250,31 @@ mod wasm_api {
                 Reflect::set(&result_obj, &JsValue::from_str("dt"),   &JsValue::from_f64(dt   as f64)).unwrap();
                 Reflect::set(&result_obj, &JsValue::from_str("nrec"), &JsValue::from_f64(nrec as f64)).unwrap();
                 Reflect::set(&result_obj, &JsValue::from_str("npt"),  &JsValue::from_f64(npt  as f64)).unwrap();
+                Reflect::set(&result_obj, &JsValue::from_str("nx"),   &JsValue::from_f64(nx   as f64)).unwrap();
+                Reflect::set(&result_obj, &JsValue::from_str("nz"),   &JsValue::from_f64(nz   as f64)).unwrap();
+                // Wavefield snapshots – keyed "snapshot/<field>.f32" in VFS
+                if let Some(nf_b) = out.get("snapshot/nframes") {
+                    if let Ok(arr4) = nf_b[..4].try_into() {
+                        let snap_nframes = u32::from_le_bytes(arr4);
+                        if snap_nframes > 0 {
+                            let snaps_obj = Object::new();
+                            for (key, bytes) in &out {
+                                if let Some(name) = key
+                                    .strip_prefix("snapshot/")
+                                    .and_then(|k| k.strip_suffix(".f32"))
+                                {
+                                    let vals: &[f32] = bytemuck::cast_slice(bytes);
+                                    let arr = Float32Array::from(vals);
+                                    Reflect::set(&snaps_obj, &JsValue::from_str(name), &arr).unwrap();
+                                }
+                            }
+                            Reflect::set(&result_obj, &JsValue::from_str("snapshots"),
+                                &snaps_obj).unwrap();
+                            Reflect::set(&result_obj, &JsValue::from_str("snap_nframes"),
+                                &JsValue::from_f64(snap_nframes as f64)).unwrap();
+                        }
+                    }
+                }
             }
             "adjoint" => {
                 let npt = slv.npt();

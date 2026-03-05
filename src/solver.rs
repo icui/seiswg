@@ -560,6 +560,12 @@ impl Solver {
     /// Number of grid points in the model.
     pub fn npt(&self) -> u32 { self.npt }
 
+    /// Number of grid columns (x direction).
+    pub fn nx(&self) -> u32 { self.params.nx }
+
+    /// Number of grid rows (z direction).
+    pub fn nz(&self) -> u32 { self.params.nz }
+
     /// Number of receiver stations.
     pub fn nrec(&self) -> usize { self.stations.len() }
 
@@ -920,7 +926,9 @@ impl Solver {
     /// Run all forward simulations; output trace files are returned as a `Vfs`
     /// (and also written to disk on native builds).
     pub async fn run_forward(&mut self) -> Result<Vfs> {
-        let mut output = Vfs::new();
+        let mut output     = Vfs::new();
+        let mut snap_bufs: HashMap<String, Vec<f32>> = HashMap::new();
+        let mut snap_count = 0u32;
         let combine = self.config.solver.combine_sources;
         let nsrc    = self.sources.len() as u32;
         let sh      = self.config.solver.sh;
@@ -1012,7 +1020,8 @@ impl Solver {
 
                 // Snapshot
                 if snap > 0 && it > 0 && it % snap == 0 {
-                    self.save_snapshot(it, sh, psv, spin, out_dir).await?;
+                    self.save_snapshot(it, sh, psv, spin, out_dir, &mut snap_bufs).await?;
+                    snap_count += 1;
                 }
 
                 // Periodic poll to prevent driver timeout on long runs
@@ -1080,6 +1089,19 @@ impl Solver {
 
             log::info!("  → traces saved to {}", trace_dir.display());
         }
+        // Encode snapshot frames into output VFS
+        if snap_count > 0 {
+            output.insert(
+                "snapshot/nframes".to_string(),
+                snap_count.to_le_bytes().to_vec(),
+            );
+            for (name, data) in snap_bufs {
+                output.insert(
+                    format!("snapshot/{}.f32", name),
+                    bytemuck::cast_slice::<f32, u8>(&data).to_vec(),
+                );
+            }
+        }
         Ok(output)
     }
 
@@ -1104,35 +1126,39 @@ impl Solver {
         self.queue.submit([enc.finish()]);
     }
 
-    /// Save a velocity snapshot (called at `save_snapshot` intervals).
-    ///
-    /// Reads only the required velocity fields from GPU instead of the entire
-    /// 44-field buffer.
+    /// Save a velocity snapshot: appends field slices to `snap_bufs` (always)
+    /// and writes raw binary files on non-wasm32 builds.
     async fn save_snapshot(
         &self,
         it: u32,
         sh: bool, psv: bool, spin: bool,
         out_dir: &Path,
+        snap_bufs: &mut HashMap<String, Vec<f32>>,
     ) -> Result<()> {
         if sh {
             let vy = self.readback_field(F_VY).await;
+            snap_bufs.entry("vy".to_string()).or_default().extend_from_slice(&vy);
             #[cfg(not(target_arch = "wasm32"))]
             write_raw_f32(&out_dir.join(format!("proc{:06}_vy.bin", it)), &vy)?;
         }
         if psv {
             let vx = self.readback_field(F_VX).await;
             let vz = self.readback_field(F_VZ).await;
+            snap_bufs.entry("vx".to_string()).or_default().extend_from_slice(&vx);
+            snap_bufs.entry("vz".to_string()).or_default().extend_from_slice(&vz);
             #[cfg(not(target_arch = "wasm32"))] {
                 write_raw_f32(&out_dir.join(format!("proc{:06}_vx.bin", it)), &vx)?;
                 write_raw_f32(&out_dir.join(format!("proc{:06}_vz.bin", it)), &vz)?;
             }
             if spin {
                 let ry = self.readback_field(F_VY_C).await;
+                snap_bufs.entry("ry".to_string()).or_default().extend_from_slice(&ry);
                 #[cfg(not(target_arch = "wasm32"))]
                 write_raw_f32(&out_dir.join(format!("proc{:06}_ry.bin", it)), &ry)?;
             }
         }
-        let _ = out_dir; // suppress unused-variable warning on wasm32
+        let _ = out_dir;
+        let _ = it;
         Ok(())
     }
 
