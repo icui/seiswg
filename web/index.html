@@ -200,6 +200,21 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
     Adjoint
     <span class="badge">200²</span>
   </button>
+  <button class="pb" id="pb-psv" onclick="loadPreset('psv')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Forward (PSV)
+    <span class="badge">200²</span>
+  </button>
+  <button class="pb" id="pb-layers" onclick="loadPreset('layers')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Layered (SH)
+    <span class="badge">200²</span>
+  </button>
+  <button class="pb" id="pb-multisrc" onclick="loadPreset('multisrc')">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+    Multi-source
+    <span class="badge">150²</span>
+  </button>
 
   <div class="sb-section" style="margin-top:12px;">Custom</div>
   <button class="pb" id="pb-custom" onclick="loadPreset('custom')">
@@ -211,7 +226,10 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
     <label>Base model type</label>
     <select id="custom-model-type" onchange="onCustomModelChange()">
       <option value="forward">Forward SH (200×200)</option>
+      <option value="psv">Forward PSV (200×200)</option>
+      <option value="layers">Layered SH (200×200)</option>
       <option value="spin">Spin PSV+μ (200×200)</option>
+      <option value="multisrc">Multi-source PSV (150×150)</option>
       <option value="adjoint">Adjoint (200×200)</option>
     </select>
   </div>
@@ -469,6 +487,248 @@ return {
   },
 };
 
+PRESETS.psv = {
+  title: 'Forward (PSV) — homogeneous 200×200, dx=100 m',
+  tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+  files: {
+    'config.ini': `[workflow]
+mode = forward
+
+[solver]
+sh   = no
+psv  = yes
+spin = no
+nt   = 1200
+dt   = 0.015
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot    = 100
+combine_sources  = yes
+threads_per_block = 128
+
+[path]
+output        = output
+output_traces = output/traces
+model_init    = model
+sources       = sources.dat
+stations      = stations.dat
+`,
+    'model.js': `// Homogeneous PSV model — Forward (PSV) example
+// Edit any value, then click Run Simulation.
+// Produces ux and uz particle-velocity seismograms.
+
+const nx = 200, nz = 200;   // grid points
+const dx = 100.0, dz = 100.0; // m
+const vp  = 3000.0;  // m/s — P-wave velocity
+const vs  = 1732.0;  // m/s — S-wave velocity
+const rho = 2700.0;  // kg/m³ — density
+
+const npt = nx * nz;
+const x = new Float32Array(npt), z = new Float32Array(npt);
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    x[i*nz+j] = i * dx;
+    z[i*nz+j] = j * dz;
+  }
+
+return {
+  'model/proc000000_x.bin':   makeBin(x),
+  'model/proc000000_z.bin':   makeBin(z),
+  'model/proc000000_vp.bin':  makeBin(new Float32Array(npt).fill(vp)),
+  'model/proc000000_vs.bin':  makeBin(new Float32Array(npt).fill(vs)),
+  'model/proc000000_rho.bin': makeBin(new Float32Array(npt).fill(rho)),
+};
+`,
+    'sources.dat': `10000.0  2000.0  0  1.0  1.0  0.0  1.0e10
+`,
+    'stations.dat': ` 4000.0  1000.0
+ 5000.0  1000.0
+ 6000.0  1000.0
+ 7000.0  1000.0
+ 8000.0  1000.0
+ 9000.0  1000.0
+10000.0  1000.0
+11000.0  1000.0
+12000.0  1000.0
+13000.0  1000.0
+14000.0  1000.0
+15000.0  1000.0
+16000.0  1000.0
+`,
+  },
+};
+
+PRESETS.layers = {
+  title: 'Layered (SH) — two-layer velocity model, 200×200, dx=100 m',
+  tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+  files: {
+    'config.ini': `[workflow]
+mode = forward
+
+[solver]
+sh   = yes
+psv  = no
+spin = no
+nt   = 2500
+dt   = 0.012
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot    = 200
+combine_sources  = yes
+threads_per_block = 128
+
+[path]
+output        = output
+output_traces = output/traces
+model_init    = model
+sources       = sources.dat
+stations      = stations.dat
+`,
+    'model.js': `// Two-layer SH model — Layered example
+// Top half (j < 100): slow crust.  Bottom half (j >= 100): fast mantle.
+// Reflected and refracted arrivals are visible on the seismograms.
+
+const nx = 200, nz = 200;      // grid points
+const dx = 100.0, dz = 100.0;  // m
+const iz_interface = 100;       // interface at z = 10 km
+
+const vs_top = 2000.0;  const vp_top = 3464.0;  const rho_top = 2400.0;
+const vs_bot = 3500.0;  const vp_bot = 6062.0;  const rho_bot = 2900.0;
+
+const npt = nx * nz;
+const x   = new Float32Array(npt), z   = new Float32Array(npt);
+const vp  = new Float32Array(npt), vs  = new Float32Array(npt);
+const rho = new Float32Array(npt);
+
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    const k = i*nz + j;
+    x[k] = i * dx;  z[k] = j * dz;
+    const bot = j >= iz_interface;
+    vp [k] = bot ? vp_bot  : vp_top;
+    vs [k] = bot ? vs_bot  : vs_top;
+    rho[k] = bot ? rho_bot : rho_top;
+  }
+
+return {
+  'model/proc000000_x.bin':   makeBin(x),
+  'model/proc000000_z.bin':   makeBin(z),
+  'model/proc000000_vp.bin':  makeBin(vp),
+  'model/proc000000_vs.bin':  makeBin(vs),
+  'model/proc000000_rho.bin': makeBin(rho),
+};
+`,
+    'sources.dat': `10000.0   500.0  0  2.0  0.5  0.0  1.0e10
+`,
+    'stations.dat': ` 2000.0   500.0
+ 3000.0   500.0
+ 4000.0   500.0
+ 5000.0   500.0
+ 6000.0   500.0
+ 7000.0   500.0
+ 8000.0   500.0
+ 9000.0   500.0
+10000.0   500.0
+11000.0   500.0
+12000.0   500.0
+13000.0   500.0
+14000.0   500.0
+15000.0   500.0
+16000.0   500.0
+17000.0   500.0
+18000.0   500.0
+`,
+  },
+};
+
+PRESETS.multisrc = {
+  title: 'Multi-source (PSV) — 4 independent sources, 150×150, dx=150 m',
+  tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
+  files: {
+    'config.ini': `[workflow]
+mode = forward
+
+[solver]
+sh   = no
+psv  = yes
+spin = no
+nt   = 1000
+dt   = 0.020
+
+abs_top    = no
+abs_bottom = yes
+abs_left   = yes
+abs_right  = yes
+abs_width  = 20
+abs_alpha  = 0.015
+
+save_snapshot    = 0
+combine_sources  = no
+threads_per_block = 128
+
+[path]
+output        = output
+output_traces = output/traces
+model_init    = model
+sources       = sources.dat
+stations      = stations.dat
+`,
+    'model.js': `// Homogeneous PSV model — Multi-source demo
+// 150×150 grid, dx=150 m.
+// combine_sources = no → each of the 4 sources is run separately,
+// producing ux_000000…ux_000003 and uz_000000…uz_000003 trace files.
+
+const nx = 150, nz = 150;   // grid points
+const dx = 150.0, dz = 150.0; // m
+const vp  = 3000.0;  // m/s — P-wave velocity
+const vs  = 1732.0;  // m/s — S-wave velocity
+const rho = 2700.0;  // kg/m³ — density
+
+const npt = nx * nz;
+const x = new Float32Array(npt), z = new Float32Array(npt);
+for (let i = 0; i < nx; i++)
+  for (let j = 0; j < nz; j++) {
+    x[i*nz+j] = i * dx;
+    z[i*nz+j] = j * dz;
+  }
+
+return {
+  'model/proc000000_x.bin':   makeBin(x),
+  'model/proc000000_z.bin':   makeBin(z),
+  'model/proc000000_vp.bin':  makeBin(new Float32Array(npt).fill(vp)),
+  'model/proc000000_vs.bin':  makeBin(new Float32Array(npt).fill(vs)),
+  'model/proc000000_rho.bin': makeBin(new Float32Array(npt).fill(rho)),
+};
+`,
+    'sources.dat': ` 3750.0  3000.0  0  1.0  0.5  90.0  1.0e10
+ 7500.0  3000.0  0  1.0  0.5  90.0  1.0e10
+12000.0  3000.0  0  1.0  0.5  90.0  1.0e10
+18000.0  3000.0  0  1.0  0.5  90.0  1.0e10
+`,
+    'stations.dat': ` 3000.0  1500.0
+ 6000.0  1500.0
+ 9000.0  1500.0
+12000.0  1500.0
+15000.0  1500.0
+18000.0  1500.0
+ 7500.0  7500.0
+13500.0  7500.0
+`,
+  },
+};
+
 PRESETS.custom = {
   title: 'Custom Configuration',
   tabs: ['config.ini', 'model.js', 'sources.dat', 'stations.dat'],
@@ -525,26 +785,29 @@ async function loadPreset(name) {
     ? document.getElementById('custom-model-type').value
     : name;
 
-  // Show loading placeholder
-  document.getElementById('config-editor').value = '# loading from GitHub…';
-
-  try {
-    currentFiles = await fetchPresetFiles(fetchName);
-    // For custom, keep a live copy the user can edit independently
-    if (name === 'custom') currentFiles = Object.assign({}, currentFiles);
-  } catch (e) {
-    document.getElementById('config-editor').value = '# Error fetching files: ' + e.message;
-    document.getElementById('run-btn').disabled = false;
-    document.getElementById('run-icon').textContent = '▶';
-    return;
-  }
-
-  // Inject model.js from the preset's built-in defaults (not on GitHub)
-  const basePreset = name === 'custom'
-    ? PRESETS[document.getElementById('custom-model-type').value]
-    : PRESETS[name];
-  if (!currentFiles['model.js'] && basePreset && basePreset.modelJs) {
-    currentFiles['model.js'] = basePreset.modelJs;
+  // Use inline files if the preset provides them; otherwise fetch from GitHub
+  if (PRESETS[fetchName]?.files) {
+    currentFiles = Object.assign({}, PRESETS[fetchName].files);
+  } else {
+    // Show loading placeholder
+    document.getElementById('config-editor').value = '# loading from GitHub…';
+    try {
+      currentFiles = await fetchPresetFiles(fetchName);
+      // For custom, keep a live copy the user can edit independently
+      if (name === 'custom') currentFiles = Object.assign({}, currentFiles);
+    } catch (e) {
+      document.getElementById('config-editor').value = '# Error fetching files: ' + e.message;
+      document.getElementById('run-btn').disabled = false;
+      document.getElementById('run-icon').textContent = '▶';
+      return;
+    }
+    // Inject model.js from the preset's built-in defaults (not on GitHub)
+    const basePreset = name === 'custom'
+      ? PRESETS[document.getElementById('custom-model-type').value]
+      : PRESETS[name];
+    if (!currentFiles['model.js'] && basePreset && basePreset.modelJs) {
+      currentFiles['model.js'] = basePreset.modelJs;
+    }
   }
 
   document.getElementById('config-editor').value = currentFiles[currentTab] || '';
@@ -572,7 +835,7 @@ async function onCustomModelChange() {
   const src = PRESETS[mt];
   // Update custom preset metadata to match the chosen base type
   PRESETS.custom.tabs    = ['config.ini', 'model.js', ...src.tabs.filter(t => t !== 'config.ini' && t !== 'model.js')];
-  PRESETS.custom.modelJs = src.modelJs;
+  PRESETS.custom.modelJs = src.files?.['model.js'] ?? src.modelJs ?? '';
   currentTab = 'config.ini';
 
   const tabsEl = document.getElementById('config-tabs');
@@ -587,15 +850,19 @@ async function onCustomModelChange() {
 
   document.getElementById('run-btn').disabled = true;
   document.getElementById('run-icon').textContent = '';
-  document.getElementById('config-editor').value = '# loading from GitHub…';
 
-  try {
-    currentFiles = Object.assign({}, await fetchPresetFiles(mt));
-  } catch (e) {
-    document.getElementById('config-editor').value = '# Error: ' + e.message;
+  if (src.files) {
+    currentFiles = Object.assign({}, src.files);
+  } else {
+    document.getElementById('config-editor').value = '# loading from GitHub…';
+    try {
+      currentFiles = Object.assign({}, await fetchPresetFiles(mt));
+    } catch (e) {
+      document.getElementById('config-editor').value = '# Error: ' + e.message;
+    }
+    // Inject model.js defaults for the chosen model type
+    if (src.modelJs) currentFiles['model.js'] = src.modelJs;
   }
-  // Inject model.js defaults for the chosen model type
-  if (src.modelJs) currentFiles['model.js'] = src.modelJs;
   document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
   document.getElementById('run-btn').disabled = false;
   document.getElementById('run-icon').textContent = '▶';
