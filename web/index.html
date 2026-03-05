@@ -622,8 +622,7 @@ async function runSim() {
     setStatus('done');
     document.getElementById('run-btn').disabled = false;
     document.getElementById('run-icon').textContent = '▶';
-    const cfg = currentFiles['config.ini'] || '';
-    const workflow = (cfg.match(/^\s*workflow\s*=\s*(\S+)/m) || [])[1] || 'forward';
+    const workflow = result.kmu ? 'adjoint' : 'forward';
     renderResults(result, workflow);
   } catch (e) {
     appendLog('[err] ' + e, 'l-err');
