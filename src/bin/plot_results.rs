@@ -290,9 +290,18 @@ fn plot_2d_grid(
     };
     let vrange = vmax - vmin;
 
-    // Wide enough for colorbar in right margin (~180 px)
-    let img_w = 1100u32;
-    let img_h = 700u32;
+    // Compute image size so the data canvas respects the model's lx/lz ratio.
+    // Fixed pixel overhead (margins + labels + colorbar column):
+    //   horizontal: left outer(20) + y_label_area(110) + right margin(200) = 330
+    //   vertical:   top outer(20) + caption(~55) + x_label_area(80) + bottom(30) = 185
+    const CANVAS_W: u32 = 700;
+    const OVERHEAD_W: u32 = 330;
+    const OVERHEAD_H: u32 = 185;
+    let lx = (x_max - x_min).max(1.0);
+    let lz = (z_max - z_min).max(1.0);
+    let canvas_h = ((CANVAS_W as f32 * lz / lx) as u32).clamp(150, 1400);
+    let img_w = CANVAS_W + OVERHEAD_W;
+    let img_h = canvas_h + OVERHEAD_H;
 
     let root = BitMapBackend::new(out_png, (img_w, img_h)).into_drawing_area();
     root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e:?}"))?;
