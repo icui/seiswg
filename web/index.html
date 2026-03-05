@@ -34,6 +34,8 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
   letter-spacing: -0.3px;
 }
 .sb-logo span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.sb-logo.active { background: var(--surface2); }
+.sb-logo.active span { color: var(--accent); }
 .sb-section {
   padding: 14px 18px 6px;
   font-size: 11px; color: var(--muted);
@@ -220,13 +222,78 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
 }
 
 .hidden { display: none !important; }
+
+/* ── sim-section fills the main area like the original layout ──────── */
+.sim-section { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.sim-section.hidden { display: none !important; }
+
+/* ── Home page ───────────────────────────────────────────────────────── */
+.home-content {
+  max-width: 820px; margin: 0 auto; padding: 36px 32px 60px;
+  color: var(--text); line-height: 1.7;
+}
+.home-content h1 {
+  font-size: 28px; font-weight: 800; color: var(--accent);
+  margin-bottom: 6px; letter-spacing: -0.5px;
+}
+.home-content .home-tagline {
+  font-size: 15px; color: var(--muted); margin-bottom: 32px;
+}
+.home-content h2 {
+  font-size: 16px; font-weight: 700; color: var(--text);
+  margin: 32px 0 10px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.home-content h3 {
+  font-size: 13px; font-weight: 700; color: var(--muted);
+  margin: 20px 0 6px; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.home-content p { margin-bottom: 10px; font-size: 14px; }
+.home-content a { color: var(--accent); text-decoration: none; }
+.home-content a:hover { text-decoration: underline; }
+.home-content .start-btn, .home-content .start-btn:hover { color: #fff; text-decoration: none; }
+.home-content table {
+  width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 6px;
+}
+.home-content th {
+  background: var(--surface2); text-align: left;
+  padding: 7px 12px; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.home-content td {
+  padding: 7px 12px; border-bottom: 1px solid #1e2530; vertical-align: top;
+}
+.home-content tr:last-child td { border-bottom: none; }
+.home-content code {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--surface2); border-radius: 4px; padding: 1px 6px;
+  color: #c9d1d9;
+}
+.home-content pre {
+  background: #080c10; border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px 16px; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.6; overflow-x: auto; margin: 10px 0 16px;
+  color: #c9d1d9;
+}
+.home-content pre code { background: none; padding: 0; }
+.start-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 6px; margin-bottom: 4px;
+  padding: 10px 22px; background: #238636;
+  color: #fff; border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s; text-decoration: none;
+}
+.start-btn:hover { background: #2ea043; text-decoration: none; }
+.home-divider { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
 </style>
 </head>
 <body>
 
 <!-- ═══════════════════════════ SIDEBAR ═══════════════════════════════ -->
 <div class="sidebar">
-  <div class="sb-logo">seiswg <span>WebGPU</span></div>
+  <div class="sb-logo" style="cursor:pointer" onclick="showPage('home')">seiswg <span>WebGPU</span></div>
 
   <div class="sb-section">Examples</div>
   <button class="pb active" id="pb-forward" onclick="loadPreset('forward')">
@@ -267,19 +334,171 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
   <div id="custom-configs-list"></div>
 
   <div style="flex:1"></div>
-  <div class="sb-hint">
-    All textareas are editable.<br>
-    <strong>model.js</strong> runs in the browser<br>
-    to generate binary model files.<br><br>
-    Runs entirely in-browser via<br>
-    <strong>WebGPU + WebAssembly</strong>.<br><br>
-    Source format:<br>
-    <code>x z type f0 t0 ang amp</code>
-  </div>
 </div>
 
 <!-- ═══════════════════════════ MAIN ══════════════════════════════════ -->
 <div class="main">
+
+  <!-- ── Home page ─────────────────────────────────────────────────── -->
+  <div class="content" id="home-section">
+    <div class="home-content">
+      <h1>seiswg</h1>
+      <p class="home-tagline">2-D finite-difference seismic solver &mdash; <strong>Rust + WebGPU</strong> backend, running entirely in-browser via WebAssembly.</p>
+      <p class="home-tagline" style="margin-top:6px;font-size:13px;">
+        All textareas in the simulator are editable.
+        <code>model.js</code> runs in-browser to generate binary model files.
+        Source format: <code>x&nbsp;z&nbsp;type&nbsp;f0&nbsp;t0&nbsp;ang&nbsp;amp</code>
+      </p>
+
+      <div style="display:flex;align-items:center;gap:12px;margin-top:20px;">
+        <a class="start-btn" onclick="showPage('sim');loadPreset(PRESETS[currentPreset]?currentPreset:'forward')" href="javascript:void(0)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3l10 5-10 5V3z"/></svg>
+          Open Simulator
+        </a>
+        <a class="start-btn" href="https://github.com/icui/seiswg" target="_blank">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          Open in GitHub
+        </a>
+      </div>
+
+      <hr class="home-divider">
+
+      <h2>Overview</h2>
+      <p>A GPU-accelerated re-implementation of the Python/CUDA
+        <a href="https://github.com/icui/seispie" target="_blank">seispie</a> solver.
+        Every compute kernel runs as a WGSL compute shader via
+        <a href="https://github.com/gfx-rs/wgpu" target="_blank">wgpu</a>,
+        targeting <strong>Vulkan, Metal, and DX12</strong> from a single code-base.
+        The in-browser build compiles to <strong>WebAssembly + WebGPU</strong> — no server or install required.
+      </p>
+      <hr class="home-divider">
+
+      <h2>Supported workflows</h2>
+      <table>
+        <thead><tr><th><code>[workflow] mode</code></th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><code>forward</code></td><td>&#10003; implemented</td></tr>
+          <tr><td><code>adjoint</code></td><td>&#10003; implemented</td></tr>
+          <tr><td><code>inversion</code></td><td>planned</td></tr>
+        </tbody>
+      </table>
+
+      <hr class="home-divider">
+
+      <h2>Config reference</h2>
+
+      <h3>[solver]</h3>
+      <table>
+        <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>sh</code></td><td><code>no</code></td><td>Enable SH wavefield (vy, sxy, szy)</td></tr>
+          <tr><td><code>psv</code></td><td><code>yes</code></td><td>Enable PSV wavefield (vx, vz, sxx, szz, sxz)</td></tr>
+          <tr><td><code>spin</code></td><td><code>no</code></td><td>Enable micropolar/spin coupling</td></tr>
+          <tr><td><code>nt</code></td><td>&mdash;</td><td>Number of time steps</td></tr>
+          <tr><td><code>dt</code></td><td>&mdash;</td><td>Time step in seconds</td></tr>
+          <tr><td><code>abs_left/right/bottom/top</code></td><td><code>no</code></td><td>Enable absorbing boundaries on each edge</td></tr>
+          <tr><td><code>abs_width</code></td><td><code>20</code></td><td>Width of absorbing layer in grid points</td></tr>
+          <tr><td><code>abs_alpha</code></td><td><code>0.015</code></td><td>Decay coefficient for Gaussian taper</td></tr>
+          <tr><td><code>save_snapshot</code></td><td><code>0</code></td><td>Save velocity snapshot every N steps (0 = off)</td></tr>
+          <tr><td><code>combine_sources</code></td><td><code>no</code></td><td>Inject all sources simultaneously</td></tr>
+        </tbody>
+      </table>
+
+      <h3>[path]</h3>
+      <table>
+        <thead><tr><th>Key</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>output</code></td><td>Directory for snapshots and other output</td></tr>
+          <tr><td><code>output_traces</code></td><td>Directory for seismogram output</td></tr>
+          <tr><td><code>model_init</code></td><td>Directory containing binary model files</td></tr>
+          <tr><td><code>model_true</code></td><td>Alternative model directory (adjoint)</td></tr>
+          <tr><td><code>sources</code></td><td>Whitespace-delimited source file</td></tr>
+          <tr><td><code>stations</code></td><td>Whitespace-delimited station file</td></tr>
+        </tbody>
+      </table>
+
+      <hr class="home-divider">
+
+      <h2>Input file formats</h2>
+
+      <h3>Model files</h3>
+      <p>Binary files named <code>proc000000_&lt;param&gt;.bin</code> in the model directory.
+        Format: 4-byte little-endian <code>int32</code> giving <code>npt</code>, followed by <code>npt &times; float32</code>.</p>
+      <table>
+        <thead><tr><th>File</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>proc000000_x.bin</code></td><td>x-coordinates [m]</td></tr>
+          <tr><td><code>proc000000_z.bin</code></td><td>z-coordinates [m]</td></tr>
+          <tr><td><code>proc000000_vp.bin</code></td><td>P-wave velocity [m/s]</td></tr>
+          <tr><td><code>proc000000_vs.bin</code></td><td>S-wave velocity [m/s]</td></tr>
+          <tr><td><code>proc000000_rho.bin</code></td><td>Density [kg/m&sup3;]</td></tr>
+          <tr><td><code>proc000000_lambda/mu/nu.bin</code></td><td>Lam&eacute; + micropolar coupling [Pa] (spin only)</td></tr>
+          <tr><td><code>proc000000_j.bin</code></td><td>Micro-inertia [kg/m&sup3;] (spin only)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>sources.dat</h3>
+      <pre><code>x_m  z_m  type  f0_Hz  t0_s  angle_deg  amplitude</code></pre>
+      <table>
+        <thead><tr><th>Field</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>x_m</code>, <code>z_m</code></td><td>Source position in metres</td></tr>
+          <tr><td><code>type</code></td><td>Unused — set to <code>0</code></td></tr>
+          <tr><td><code>f0_Hz</code></td><td>Ricker dominant frequency</td></tr>
+          <tr><td><code>t0_s</code></td><td>Ricker delay time</td></tr>
+          <tr><td><code>angle_deg</code></td><td>Force azimuth (0 = +x, 90 = +z)</td></tr>
+          <tr><td><code>amplitude</code></td><td>Force amplitude</td></tr>
+        </tbody>
+      </table>
+
+      <h3>stations.dat</h3>
+      <pre><code>x_m  z_m</code></pre>
+
+      <hr class="home-divider">
+
+      <h2>Output files</h2>
+      <table>
+        <thead><tr><th>File</th><th>Component</th><th>Layout</th></tr></thead>
+        <tbody>
+          <tr><td><code>uy_NNNNNN.npy</code></td><td>SH displacement y</td><td>NumPy <code>[nrec, nt]</code></td></tr>
+          <tr><td><code>ux_NNNNNN.npy</code></td><td>PSV displacement x</td><td>NumPy <code>[nrec, nt]</code></td></tr>
+          <tr><td><code>uz_NNNNNN.npy</code></td><td>PSV displacement z</td><td>NumPy <code>[nrec, nt]</code></td></tr>
+          <tr><td><code>ry_NNNNNN.npy</code></td><td>Spin total micro-rotation y</td><td>NumPy <code>[nrec, nt]</code></td></tr>
+          <tr><td><code>yi_NNNNNN.npy</code></td><td>Isolated rotation</td><td>NumPy <code>[nrec, nt]</code></td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:13px;color:var(--muted)"><code>NNNNNN</code> is the zero-padded source index.
+      Velocity snapshots (<code>save_snapshot &gt; 0</code>) are raw float32 <code>proc{it:06}_v*.bin</code> in <code>output/</code>.</p>
+
+      <hr class="home-divider">
+
+      <h2>Physics</h2>
+      <p>4th-order staggered-grid finite-difference scheme in space, first-order explicit time stepping:</p>
+      <ul style="font-size:14px;padding-left:22px;margin-bottom:10px;">
+        <li><strong>SH</strong> &mdash; anti-plane shear: v<sub>y</sub>, &sigma;<sub>xy</sub>, &sigma;<sub>zy</sub></li>
+        <li><strong>PSV</strong> &mdash; in-plane: v<sub>x</sub>, v<sub>z</sub>, &sigma;<sub>xx</sub>, &sigma;<sub>zz</sub>, &sigma;<sub>xz</sub></li>
+        <li><strong>Micropolar/spin</strong> &mdash; classical PSV + micro-rotation &phi;<sub>y</sub> via couple-stress tensor; yields total rotation, isolated rotation, and curl rotation seismograms</li>
+      </ul>
+      <p>Absorbing boundaries use a Gaussian taper applied multiplicatively to velocity fields after each update.</p>
+
+      <hr class="home-divider">
+
+      <h2>Building the WASM package</h2>
+      <pre><code># install wasm-pack (one-time)
+cargo install wasm-pack --locked
+rustup target add wasm32-unknown-unknown
+
+# compile
+wasm-pack build --release --target web --out-dir web/pkg
+
+# serve locally
+npx serve web</code></pre>
+      <p>Then open <a href="http://localhost:3000" target="_blank">localhost:3000</a> in Chrome &ge;&nbsp;113, Edge &ge;&nbsp;113, or Safari &ge;&nbsp;18.</p>
+    </div>
+  </div>
+
+  <!-- ── Simulator ──────────────────────────────────────────────────── -->
+  <div class="sim-section hidden" id="sim-section">
   <div class="toolbar">
     <span class="toolbar-title" id="preset-title">Forward (SH) — homogeneous 200×200, dx=100 m</span>
     <span id="status-badge" class="hidden"></span>
@@ -312,8 +531,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
       </div>
     </div>
   </div>
-</div>
-
+  </div><!-- end #sim-section -->
 <script type="module">
 // ── Chrome compatibility: strip limits removed from the WebGPU spec ─────────
 // wgpu unconditionally serialises every Limits field into requiredLimits,
@@ -897,6 +1115,7 @@ async function loadCustomConfig(id) {
   if (btn) btn.classList.add('active');
 
   document.getElementById('preset-title').textContent = record.name || 'Untitled';
+  showPage('sim');
 
   const tabsEl = document.getElementById('config-tabs');
   tabsEl.innerHTML = '';
@@ -998,6 +1217,26 @@ document.addEventListener('pointerdown', e => {
 });
 
 // ════════════════════════════════════════════════════════════════════
+// Page navigation (home / sim)
+// ════════════════════════════════════════════════════════════════════
+function showPage(page) {
+  const isHome = page === 'home';
+  document.getElementById('home-section').classList.toggle('hidden', !isHome);
+  document.getElementById('sim-section').classList.toggle('hidden', isHome);
+  document.querySelector('.sb-logo').classList.toggle('active', isHome);
+  if (isHome) {
+    document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
+  } else {
+    // Restore sidebar highlight for the active preset
+    document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
+    if (currentPreset && currentPreset !== '__custom__') {
+      const btn = document.getElementById('pb-' + currentPreset);
+      if (btn) btn.classList.add('active');
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Preset loading
 // ════════════════════════════════════════════════════════════════════
 async function loadPreset(name) {
@@ -1012,6 +1251,7 @@ async function loadPreset(name) {
   const btn = document.getElementById('pb-' + name);
   if (btn) btn.classList.add('active');
   document.getElementById('preset-title').textContent = p.title;
+  showPage('sim');
 
   // Build tab bar
   const tabsEl = document.getElementById('config-tabs');
@@ -1107,6 +1347,7 @@ window._deletePopupConfig   = _deletePopupConfig;
 window._openConfigPopup     = _openConfigPopup;
 window._onNameInput         = _onNameInput;
 window._scheduleSave        = _scheduleSave;
+window.showPage             = showPage;
 
 // ════════════════════════════════════════════════════════════════════
 // Run simulation
@@ -1543,9 +1784,10 @@ function appendLog(text, cls) {
 // Show log box immediately so the WASM ready message is visible
 document.getElementById('results-section').classList.remove('hidden');
 
-// Render any saved custom configs, then load default preset
+// Render any saved custom configs, load default preset in background, show home
 _renderCustomSidebar();
 loadPreset('forward');
+showPage('home');
 </script>
 
 <!-- ═══════════════════════ CONFIG POPUP ═══════════════════════ -->
