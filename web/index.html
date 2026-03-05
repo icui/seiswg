@@ -55,21 +55,65 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
 }
 .pb.active .badge { background: #1f3560; color: var(--accent); }
 
-.sb-custom-opts {
-  margin: 8px 18px 0;
-  padding: 10px 12px;
-  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+.pb-row { display: flex; align-items: stretch; }
+.pb-row .pb { flex: 1; min-width: 0; overflow: hidden; }
+.pb-more-btn {
+  flex-shrink: 0; padding: 0 10px; background: none; border: none;
+  color: transparent; cursor: pointer; font-size: 15px; letter-spacing: 2px;
+  transition: background 0.1s, color 0.1s;
 }
-.sb-custom-opts label {
+/* row hover — both sides highlight together */
+.pb-row:hover > .pb         { background: var(--surface2); color: var(--text); }
+.pb-row:hover > .pb-more-btn { background: var(--surface2); color: var(--muted); }
+/* active row — keep ··· styled */
+.pb-row:has(.pb.active) > .pb-more-btn { background: var(--surface2); color: var(--accent); }
+/* ··· own hover: slightly brighter to signal it's clickable */
+.pb-more-btn:hover { color: var(--text) !important; }
+
+.config-popup {
+  position: fixed; z-index: 300;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; min-width: 236px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+}
+.config-popup label {
   display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px;
   text-transform: uppercase; letter-spacing: 0.05em;
 }
-.sb-custom-opts select {
+.config-popup select,
+.config-popup input[type="text"] {
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
-  padding: 5px 8px; font-size: 13px; cursor: pointer;
+  padding: 5px 8px; font-size: 13px;
 }
-.sb-custom-opts select:focus { outline: none; border-color: var(--accent); }
+.config-popup select { cursor: pointer; }
+.config-popup select:focus,
+.config-popup input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.sb-section-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 6px;
+}
+.sb-section-row .sb-section-label {
+  font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+.sb-add-btn {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1;
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.sb-add-btn:hover { background: var(--surface2); color: var(--text); }
+.sb-delete-btn {
+  margin-top: 10px; width: 100%;
+  background: none; border: 1px solid var(--red); border-radius: 4px;
+  color: var(--red); cursor: pointer; font-size: 12px; padding: 5px 0;
+  transition: background 0.1s;
+}
+.sb-delete-btn:hover { background: #2d1010; }
+.sb-save-ind {
+  font-size: 10px; color: var(--green); text-align: right; margin-top: 5px; min-height: 14px;
+}
 
 .sb-hint {
   margin: auto 18px 18px;
@@ -216,23 +260,11 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
     <span class="badge">150²</span>
   </button>
 
-  <div class="sb-section" style="margin-top:12px;">Custom</div>
-  <button class="pb" id="pb-custom" onclick="loadPreset('custom')">
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1v14M1 8h14" stroke="currentColor" stroke-width="2" fill="none"/></svg>
-    New Configuration
-  </button>
-
-  <div class="sb-custom-opts hidden" id="custom-opts">
-    <label>Base model type</label>
-    <select id="custom-model-type" onchange="onCustomModelChange()">
-      <option value="forward">Forward SH (200×200)</option>
-      <option value="psv">Forward PSV (200×200)</option>
-      <option value="layers">Layered SH (200×200)</option>
-      <option value="spin">Spin PSV+μ (200×200)</option>
-      <option value="multisrc">Multi-source PSV (150×150)</option>
-      <option value="adjoint">Adjoint (200×200)</option>
-    </select>
+  <div class="sb-section-row" style="margin-top:12px;">
+    <span class="sb-section-label">Custom</span>
+    <button class="sb-add-btn" title="New custom configuration" onclick="newCustomConfig()">+</button>
   </div>
+  <div id="custom-configs-list"></div>
 
   <div style="flex:1"></div>
   <div class="sb-hint">
@@ -263,7 +295,7 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, sa
         <span class="panel-label">Configuration</span>
         <div id="config-tabs"></div>
       </div>
-      <textarea class="config-editor" id="config-editor" spellcheck="false"></textarea>
+      <textarea class="config-editor" id="config-editor" spellcheck="false" oninput="_scheduleSave()"></textarea>
     </div>
 
     <!-- Results -->
@@ -738,10 +770,12 @@ PRESETS.custom = {
 // ════════════════════════════════════════════════════════════════════
 // App state
 // ════════════════════════════════════════════════════════════════════
-let currentPreset = 'forward';
-let currentTab    = 'config.ini';
-let currentFiles  = {};
-let animTimers    = [];  // setInterval IDs for wavefield animations
+let currentPreset   = 'forward';
+let currentConfigId = null;   // UUID of active IDB config, or null
+let _popupConfigId  = null;   // UUID the settings popup is currently showing
+let currentTab      = 'config.ini';
+let currentFiles    = {};
+let animTimers      = [];  // setInterval IDs for wavefield animations
 
 function stopAllAnimations() {
   for (const id of animTimers) clearInterval(id);
@@ -749,21 +783,237 @@ function stopAllAnimations() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// IndexedDB helpers
+// ════════════════════════════════════════════════════════════════════
+const _IDB_NAME  = 'seiswg';
+const _IDB_VER   = 1;
+const _IDB_STORE = 'configs';
+
+function _idbOpen() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(_IDB_NAME, _IDB_VER);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(_IDB_STORE, { keyPath: 'id' });
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+async function _idbGetAll() {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const req = db.transaction(_IDB_STORE, 'readonly').objectStore(_IDB_STORE).getAll();
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+async function _idbGet(id) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const req = db.transaction(_IDB_STORE, 'readonly').objectStore(_IDB_STORE).get(id);
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+async function _idbPut(record) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const req = db.transaction(_IDB_STORE, 'readwrite').objectStore(_IDB_STORE).put(record);
+    req.onsuccess = () => res();
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+async function _idbDelete(id) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const req = db.transaction(_IDB_STORE, 'readwrite').objectStore(_IDB_STORE).delete(id);
+    req.onsuccess = () => res();
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Custom configuration management
+// ════════════════════════════════════════════════════════════════════
+async function _renderCustomSidebar() {
+  const list = document.getElementById('custom-configs-list');
+  list.innerHTML = '';
+  const configs = await _idbGetAll();
+  configs.sort((a, b) => a.createdAt - b.createdAt);
+  for (const cfg of configs) {
+    const row = document.createElement('div');
+    row.className = 'pb-row';
+    const btn = document.createElement('button');
+    btn.className = 'pb' + (cfg.id === currentConfigId ? ' active' : '');
+    btn.id = 'pb-idb-' + cfg.id;
+    btn.onclick = () => loadCustomConfig(cfg.id);
+    btn.innerHTML =
+      `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v2H2zm0 4h12v2H2zm0 4h8v2H2z"/></svg>` +
+      `<span class="pb-lbl">${cfg.name || 'Untitled'}</span>`;
+    const more = document.createElement('button');
+    more.className = 'pb-more-btn';
+    more.title = 'Settings';
+    more.textContent = '···';
+    more.onclick = e => { e.stopPropagation(); _openConfigPopup(cfg.id, more); };
+    row.appendChild(btn);
+    row.appendChild(more);
+    list.appendChild(row);
+  }
+}
+
+async function newCustomConfig() {
+  const mt  = 'forward';
+  const src = PRESETS[mt];
+  const id  = crypto.randomUUID();
+  const files = src.files ? Object.assign({}, src.files) : {};
+  if (!files['model.js']) files['model.js'] = src.modelJs || '';
+  const existing = await _idbGetAll();
+  const usedNums = new Set(
+    existing.map(c => { const m = /^Untitled (\d+)$/.exec(c.name); return m ? +m[1] : 0; })
+  );
+  let n = 1;
+  while (usedNums.has(n)) n++;
+  const record = {
+    id,
+    name: `Untitled ${n}`,
+    baseType: mt,
+    tabs: ['config.ini', 'model.js', ...src.tabs.filter(t => t !== 'config.ini' && t !== 'model.js')],
+    files,
+    createdAt: Date.now(),
+  };
+  await _idbPut(record);
+  await _renderCustomSidebar();
+  loadCustomConfig(id);
+}
+
+async function loadCustomConfig(id) {
+  saveTab();
+  const record = await _idbGet(id);
+  if (!record) return;
+
+  currentConfigId = id;
+  currentPreset   = '__custom__';
+
+  document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('pb-idb-' + id);
+  if (btn) btn.classList.add('active');
+
+  document.getElementById('preset-title').textContent = record.name || 'Untitled';
+
+  const tabsEl = document.getElementById('config-tabs');
+  tabsEl.innerHTML = '';
+  record.tabs.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
+    b.textContent = t;
+    b.onclick = () => switchTab(t);
+    tabsEl.appendChild(b);
+  });
+
+  currentTab   = 'config.ini';
+  currentFiles = Object.assign({}, record.files);
+  document.getElementById('results-section').classList.add('hidden');
+  document.getElementById('status-badge').classList.add('hidden');
+  document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-icon').textContent = '▶';
+}
+
+async function _deletePopupConfig() {
+  if (!_popupConfigId) return;
+  if (!confirm('Delete this configuration?')) return;
+  const id = _popupConfigId;
+  _popupConfigId = null;
+  document.getElementById('config-popup').classList.add('hidden');
+  const wasActive = id === currentConfigId;
+  if (wasActive) currentConfigId = null;
+  await _idbDelete(id);
+  await _renderCustomSidebar();
+  if (wasActive) loadPreset('forward');
+}
+
+let _saveTimer = null;
+function _scheduleSave() {
+  if (!currentConfigId) return;
+  clearTimeout(_saveTimer);
+  if (_popupConfigId === currentConfigId)
+    document.getElementById('save-indicator').textContent = '● saving…';
+  _saveTimer = setTimeout(_persistCurrentConfig, 700);
+}
+
+async function _persistCurrentConfig() {
+  if (!currentConfigId) return;
+  saveTab();
+  const record = await _idbGet(currentConfigId);
+  if (!record) return;
+  record.files = Object.assign({}, currentFiles);
+  await _idbPut(record);
+  if (_popupConfigId === currentConfigId)
+    document.getElementById('save-indicator').textContent = '● saved';
+}
+
+let _nameTimer = null;
+function _onNameInput() {
+  if (!_popupConfigId) return;
+  const name = document.getElementById('custom-config-name').value || 'Untitled';
+  const lbl = document.querySelector('#pb-idb-' + _popupConfigId + ' .pb-lbl');
+  if (lbl) lbl.textContent = name;
+  if (_popupConfigId === currentConfigId)
+    document.getElementById('preset-title').textContent = name;
+  document.getElementById('save-indicator').textContent = '● saving…';
+  clearTimeout(_nameTimer);
+  _nameTimer = setTimeout(async () => {
+    const record = await _idbGet(_popupConfigId);
+    if (!record) return;
+    record.name = name;
+    await _idbPut(record);
+    document.getElementById('save-indicator').textContent = '● saved';
+  }, 500);
+}
+
+function _openConfigPopup(id, anchor) {
+  _popupConfigId = id;
+  _idbGet(id).then(record => {
+    if (!record) return;
+    document.getElementById('custom-config-name').value = record.name || '';
+    document.getElementById('custom-model-type').value  = record.baseType || 'forward';
+    document.getElementById('save-indicator').textContent = '';
+    const popup = document.getElementById('config-popup');
+    popup.classList.remove('hidden');
+    const r  = anchor.getBoundingClientRect();
+    const pw = Math.max(popup.offsetWidth, 236);
+    const ph = popup.offsetHeight || 180;
+    let left = r.right + 8;
+    let top  = r.top;
+    if (left + pw > window.innerWidth  - 8) left = r.left - pw - 8;
+    if (top  + ph > window.innerHeight - 8) top  = window.innerHeight - ph - 8;
+    popup.style.left = left + 'px';
+    popup.style.top  = Math.max(8, top) + 'px';
+  });
+}
+
+document.addEventListener('pointerdown', e => {
+  const popup = document.getElementById('config-popup');
+  if (!popup || popup.classList.contains('hidden')) return;
+  if (!popup.contains(e.target) && !e.target.closest('.pb-more-btn'))
+    popup.classList.add('hidden');
+});
+
+// ════════════════════════════════════════════════════════════════════
 // Preset loading
 // ════════════════════════════════════════════════════════════════════
 async function loadPreset(name) {
   saveTab();
-  currentPreset = name;
+  currentPreset   = name;
+  currentConfigId = null;
   const p = PRESETS[name];
+  if (!p) return;
 
-  // Sidebar highlight + custom opts
+  // Sidebar highlight
   document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('pb-' + name);
   if (btn) btn.classList.add('active');
-  document.getElementById('custom-opts').classList.toggle('hidden', name !== 'custom');
   document.getElementById('preset-title').textContent = p.title;
 
-  // Build tab bar immediately (content loaded below)
+  // Build tab bar
   const tabsEl = document.getElementById('config-tabs');
   tabsEl.innerHTML = '';
   p.tabs.forEach(t => {
@@ -780,33 +1030,21 @@ async function loadPreset(name) {
   document.getElementById('run-btn').disabled = true;
   document.getElementById('run-icon').textContent = '';
 
-  // For custom, base files come from whichever model type is selected
-  const fetchName = name === 'custom'
-    ? document.getElementById('custom-model-type').value
-    : name;
-
-  // Use inline files if the preset provides them; otherwise fetch from GitHub
-  if (PRESETS[fetchName]?.files) {
-    currentFiles = Object.assign({}, PRESETS[fetchName].files);
+  // Use inline files if provided; otherwise fetch from GitHub
+  if (p.files) {
+    currentFiles = Object.assign({}, p.files);
   } else {
-    // Show loading placeholder
     document.getElementById('config-editor').value = '# loading from GitHub…';
     try {
-      currentFiles = await fetchPresetFiles(fetchName);
-      // For custom, keep a live copy the user can edit independently
-      if (name === 'custom') currentFiles = Object.assign({}, currentFiles);
+      currentFiles = await fetchPresetFiles(name);
     } catch (e) {
       document.getElementById('config-editor').value = '# Error fetching files: ' + e.message;
       document.getElementById('run-btn').disabled = false;
       document.getElementById('run-icon').textContent = '▶';
       return;
     }
-    // Inject model.js from the preset's built-in defaults (not on GitHub)
-    const basePreset = name === 'custom'
-      ? PRESETS[document.getElementById('custom-model-type').value]
-      : PRESETS[name];
-    if (!currentFiles['model.js'] && basePreset && basePreset.modelJs) {
-      currentFiles['model.js'] = basePreset.modelJs;
+    if (!currentFiles['model.js'] && p.modelJs) {
+      currentFiles['model.js'] = p.modelJs;
     }
   }
 
@@ -831,46 +1069,44 @@ function saveTab() {
 }
 
 async function onCustomModelChange() {
-  const mt = document.getElementById('custom-model-type').value;
+  if (!_popupConfigId) return;
+  const mt  = document.getElementById('custom-model-type').value;
   const src = PRESETS[mt];
-  // Update custom preset metadata to match the chosen base type
-  PRESETS.custom.tabs    = ['config.ini', 'model.js', ...src.tabs.filter(t => t !== 'config.ini' && t !== 'model.js')];
-  PRESETS.custom.modelJs = src.files?.['model.js'] ?? src.modelJs ?? '';
-  currentTab = 'config.ini';
 
-  const tabsEl = document.getElementById('config-tabs');
-  tabsEl.innerHTML = '';
-  PRESETS.custom.tabs.forEach(t => {
-    const b = document.createElement('button');
-    b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
-    b.textContent = t;
-    b.onclick = () => switchTab(t);
-    tabsEl.appendChild(b);
-  });
+  const record = await _idbGet(_popupConfigId);
+  if (!record) return;
+  record.baseType = mt;
+  record.tabs     = ['config.ini', 'model.js', ...src.tabs.filter(t => t !== 'config.ini' && t !== 'model.js')];
+  record.files    = src.files ? Object.assign({}, src.files) : {};
+  if (!record.files['model.js']) record.files['model.js'] = src.modelJs || '';
+  await _idbPut(record);
 
-  document.getElementById('run-btn').disabled = true;
-  document.getElementById('run-icon').textContent = '';
-
-  if (src.files) {
-    currentFiles = Object.assign({}, src.files);
-  } else {
-    document.getElementById('config-editor').value = '# loading from GitHub…';
-    try {
-      currentFiles = Object.assign({}, await fetchPresetFiles(mt));
-    } catch (e) {
-      document.getElementById('config-editor').value = '# Error: ' + e.message;
-    }
-    // Inject model.js defaults for the chosen model type
-    if (src.modelJs) currentFiles['model.js'] = src.modelJs;
+  if (_popupConfigId === currentConfigId) {
+    currentFiles = Object.assign({}, record.files);
+    currentTab   = 'config.ini';
+    const tabsEl = document.getElementById('config-tabs');
+    tabsEl.innerHTML = '';
+    record.tabs.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'tab-btn' + (t === 'config.ini' ? ' active' : '');
+      b.textContent = t;
+      b.onclick = () => switchTab(t);
+      tabsEl.appendChild(b);
+    });
+    document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
   }
-  document.getElementById('config-editor').value = currentFiles['config.ini'] || '';
-  document.getElementById('run-btn').disabled = false;
-  document.getElementById('run-icon').textContent = '▶';
+  document.getElementById('save-indicator').textContent = '● saved';
 }
 
 // expose for onclick attributes
-window.loadPreset = loadPreset;
-window.onCustomModelChange = onCustomModelChange;
+window.loadPreset           = loadPreset;
+window.onCustomModelChange  = onCustomModelChange;
+window.newCustomConfig      = newCustomConfig;
+window.loadCustomConfig     = loadCustomConfig;
+window._deletePopupConfig   = _deletePopupConfig;
+window._openConfigPopup     = _openConfigPopup;
+window._onNameInput         = _onNameInput;
+window._scheduleSave        = _scheduleSave;
 
 // ════════════════════════════════════════════════════════════════════
 // Run simulation
@@ -1307,8 +1543,26 @@ function appendLog(text, cls) {
 // Show log box immediately so the WASM ready message is visible
 document.getElementById('results-section').classList.remove('hidden');
 
-// Kick off initial preset load (async — fetches from GitHub)
+// Render any saved custom configs, then load default preset
+_renderCustomSidebar();
 loadPreset('forward');
 </script>
+
+<!-- ═══════════════════════ CONFIG POPUP ═══════════════════════ -->
+<div class="config-popup hidden" id="config-popup">
+  <label>Name</label>
+  <input type="text" id="custom-config-name" placeholder="Untitled" oninput="_onNameInput()">
+  <label style="margin-top:10px;">Base template</label>
+  <select id="custom-model-type" onchange="onCustomModelChange()">
+    <option value="forward">Forward SH (200×200)</option>
+    <option value="psv">Forward PSV (200×200)</option>
+    <option value="layers">Layered SH (200×200)</option>
+    <option value="spin">Spin PSV+μ (200×200)</option>
+    <option value="multisrc">Multi-source PSV (150×150)</option>
+    <option value="adjoint">Adjoint (200×200)</option>
+  </select>
+  <div class="sb-save-ind" id="save-indicator"></div>
+  <button class="sb-delete-btn" onclick="_deletePopupConfig()">Delete configuration</button>
+</div>
 </body>
 </html>
