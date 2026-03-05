@@ -14,7 +14,7 @@
 //!
 //! # Updating fixtures
 //! After an intentional solver change that alters the ouput, re-run the
-//! examples with `run_example.sh` and copy the new reference files:
+//! examples with `run_example.bash` and copy the new reference files:
 //! ```
 //! cp examples/forward/output/proc000100_vy.bin          tests/fixtures/forward/
 //! cp examples/forward/output/traces/uy_000000.npy       tests/fixtures/forward/
@@ -250,7 +250,7 @@ fn test_spin() {
 ///
 /// Observed traces (`obs_traces/`) are pre-committed to the repository.
 /// Only the adjoint pass is run here; the separate `config_true.ini` forward
-/// pass that regenerates them is covered by `run_example.sh`.
+/// pass that regenerates them is covered by `run_example.bash`.
 ///
 /// Checks:
 ///  - `output/proc000000_kmu.bin` — µ sensitivity kernel (raw f32)
@@ -263,7 +263,7 @@ fn test_adjoint() {
     // Make sure the required inputs exist before running.
     assert!(
         ex.join("obs_traces").join("uy_000000.npy").exists(),
-        "obs_traces/uy_000000.npy not found — run `run_example.sh 1` (adjoint) first \
+        "obs_traces/uy_000000.npy not found — run `run_example.bash 1` (adjoint) first \
          or ensure the obs_traces are committed"
     );
     assert!(

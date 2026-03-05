@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# run_example.sh  –  build, run, and plot a seiswg example
+# run_example.bash  –  build, run, and plot a seiswg example
 #
 # Usage:
-#   ./run_example.sh          (interactive menu)
-#   ./run_example.sh 1        (run example 1 without prompting)
+#   ./run_example.bash          (interactive menu)
+#   ./run_example.bash 1        (run example 1 without prompting)
 #
-# Requires: Rust toolchain, Python 3 with numpy / matplotlib
+# Requires: Rust toolchain
 
 set -euo pipefail
 
 WG_ROOT="$(cd "$(dirname "$0")" && pwd)"
 EXAMPLES_DIR="$WG_ROOT/examples"
 BINARY="$WG_ROOT/target/release/seiswg"
-PLOT_SCRIPT="$WG_ROOT/scripts/plot_results.py"
+GEN_MODEL="$WG_ROOT/target/release/gen_model"
+PLOT_SCRIPT="$WG_ROOT/target/release/plot_results"
 
-# Portable millisecond timestamp (date +%s%3N is GNU-only; macOS date lacks %N)
-now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+# Portable millisecond timestamp (macOS date lacks %N; perl -MTime::HiRes is pre-installed)
+now_ms() {
+  perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000' 2>/dev/null \
+    || echo $(( $(date +%s) * 1000 ))
+}
 
 # ── Collect available examples ────────────────────────────────────────────
 DIRS=()
@@ -59,12 +63,10 @@ echo "▶ Building seiswg (release)…"
 (cd "$WG_ROOT" && cargo build --release 2>&1)
 echo "  ✓ binary: $BINARY"
 
-# ── Generate model (if script present) ───────────────────────────────────
-if [ -f "$EXAMPLE_DIR/generate_model.py" ]; then
-  echo ""
-  echo "▶ Generating model…"
-  python "$EXAMPLE_DIR/generate_model.py"
-fi
+# ── Generate model ───────────────────────────────────────────────────────
+echo ""
+echo "▶ Generating model…"
+"$GEN_MODEL" "$EXAMPLE_DIR"
 
 # ── Clean previous output ─────────────────────────────────────────────────
 echo ""
@@ -95,7 +97,7 @@ echo "  ✓ done in ${ELAPSED} ms"
 # ── Plot results ──────────────────────────────────────────────────────────
 echo ""
 echo "▶ Plotting results…"
-python "$PLOT_SCRIPT" "$EXAMPLE_DIR"
+"$PLOT_SCRIPT" "$EXAMPLE_DIR"
 echo "  ✓ PNG files written alongside output data"
 
 echo ""

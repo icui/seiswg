@@ -8,6 +8,14 @@ description = "2D finite-difference seismic solver – Rust + WebGPU backend"
 name = "seiswg"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen_model"
+path = "src/bin/gen_model.rs"
+
+[[bin]]
+name = "plot_results"
+path = "src/bin/plot_results.rs"
+
 [dependencies]
 # WebGPU runtime (Vulkan / Metal / DX12 / native WebGPU)
 wgpu        = "22"
@@ -22,3 +30,5 @@ configparser = "3"
 # Logging
 env_logger  = "0.11"
 log         = "0.4"
+# Plotting (PNG output for plot_results binary)
+plotters    = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
