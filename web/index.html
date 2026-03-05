@@ -1068,6 +1068,7 @@ async function _renderCustomSidebar() {
       `<span class="pb-lbl">${cfg.name || 'Untitled'}</span>`;
     const more = document.createElement('button');
     more.className = 'pb-more-btn';
+    more.id = 'pb-more-' + cfg.id;
     more.title = 'Settings';
     more.textContent = '···';
     more.onclick = e => { e.stopPropagation(); _openConfigPopup(cfg.id, more); };
@@ -1100,6 +1101,8 @@ async function newCustomConfig() {
   await _idbPut(record);
   await _renderCustomSidebar();
   loadCustomConfig(id);
+  const moreBtn = document.getElementById('pb-more-' + id);
+  if (moreBtn) _openConfigPopup(id, moreBtn);
 }
 
 async function loadCustomConfig(id) {
@@ -1227,9 +1230,12 @@ function showPage(page) {
   if (isHome) {
     document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
   } else {
-    // Restore sidebar highlight for the active preset
+    // Restore sidebar highlight for the active preset or custom config
     document.querySelectorAll('.pb').forEach(b => b.classList.remove('active'));
-    if (currentPreset && currentPreset !== '__custom__') {
+    if (currentPreset === '__custom__' && currentConfigId) {
+      const btn = document.getElementById('pb-idb-' + currentConfigId);
+      if (btn) btn.classList.add('active');
+    } else if (currentPreset && currentPreset !== '__custom__') {
       const btn = document.getElementById('pb-' + currentPreset);
       if (btn) btn.classList.add('active');
     }
