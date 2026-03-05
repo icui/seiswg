@@ -1,11 +1,11 @@
 [package]
-name = "seispie-wg"
+name = "seiswg"
 version = "0.1.0"
 edition = "2021"
 description = "2D finite-difference seismic solver – Rust + WebGPU backend"
 
 [[bin]]
-name = "seispie-wg"
+name = "seiswg"
 path = "src/main.rs"
 
 [dependencies]

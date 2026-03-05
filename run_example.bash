@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_example.sh  –  build, run, and plot a seispie-wg example
+# run_example.sh  –  build, run, and plot a seiswg example
 #
 # Usage:
 #   ./run_example.sh          (interactive menu)
@@ -11,11 +11,15 @@ set -euo pipefail
 
 WG_ROOT="$(cd "$(dirname "$0")" && pwd)"
 EXAMPLES_DIR="$WG_ROOT/examples"
-BINARY="$WG_ROOT/target/release/seispie-wg"
+BINARY="$WG_ROOT/target/release/seiswg"
 PLOT_SCRIPT="$WG_ROOT/scripts/plot_results.py"
 
+# Portable millisecond timestamp (date +%s%3N is GNU-only; macOS date lacks %N)
+now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+
 # ── Collect available examples ────────────────────────────────────────────
-mapfile -t DIRS < <(find "$EXAMPLES_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+DIRS=()
+while IFS= read -r line; do DIRS+=("$line"); done < <(find "$EXAMPLES_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 NDIRS=${#DIRS[@]}
 
 if [ "$NDIRS" -eq 0 ]; then
@@ -51,7 +55,7 @@ echo "════════════════════════�
 
 # ── Build (release) ───────────────────────────────────────────────────────
 echo ""
-echo "▶ Building seispie-wg (release)…"
+echo "▶ Building seiswg (release)…"
 (cd "$WG_ROOT" && cargo build --release 2>&1)
 echo "  ✓ binary: $BINARY"
 
@@ -73,18 +77,18 @@ if [ -f "$EXAMPLE_DIR/config_true.ini" ]; then
   echo ""
   echo "▶ Generating observed traces (forward with model_true)…"
   rm -rf "$EXAMPLE_DIR/obs_traces" "$EXAMPLE_DIR/obs_trash"
-  START=$(date +%s%3N)
+  START=$(now_ms)
   RUST_LOG=seispie_wg=info "$BINARY" "$EXAMPLE_DIR/config_true.ini"
-  END=$(date +%s%3N)
+  END=$(now_ms)
   echo "  ✓ done in $(( END - START )) ms"
 fi
 
 # ── Run main solver ───────────────────────────────────────────────────────
 echo ""
 echo "▶ Running simulation ($(grep -m1 'mode' "$EXAMPLE_DIR/config.ini" | tr -d ' '))…"
-START=$(date +%s%3N)
+START=$(now_ms)
 RUST_LOG=seispie_wg=info "$BINARY" "$EXAMPLE_DIR/config.ini"
-END=$(date +%s%3N)
+END=$(now_ms)
 ELAPSED=$(( END - START ))
 echo "  ✓ done in ${ELAPSED} ms"
 

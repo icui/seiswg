@@ -1,7 +1,7 @@
-//! seispie-wg  –  2-D finite-difference seismic solver, Rust + WebGPU.
+//! seiswg  –  2-D finite-difference seismic solver, Rust + WebGPU.
 //!
 //! Usage:
-//!   seispie-wg <config.ini>
+//!   seiswg <config.ini>
 //!
 //! The config.ini format is identical to the Python seispie configs.
 
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
             slv.run_adjoint()?;
         }
         other => {
-            anyhow::bail!("Workflow '{}' is not yet implemented in seispie-wg", other);
+            anyhow::bail!("Workflow '{}' is not yet implemented in seiswg", other);
         }
     }
 

@@ -1,5 +1,5 @@
 // =========================================================================
-// seispie-wg  –  2-D finite-difference elastic / micropolar solver
+// seiswg  –  2-D finite-difference elastic / micropolar solver
 //               running as WebGPU compute shaders
 //
 // Buffer layout

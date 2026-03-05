@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""plot_results.py  –  visualise seispie-wg output
+"""plot_results.py  –  visualise seiswg output
 
 Usage:
     python scripts/plot_results.py  <example_dir>

@@ -1,4 +1,4 @@
-//! Integration tests for seispie-wg.
+//! Integration tests for seiswg.
 //!
 //! Each test runs the release binary against one of the three bundled examples
 //! (`forward`, `spin`, `adjoint`) and compares selected output files against
@@ -49,7 +49,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn binary() -> PathBuf {
-    workspace_root().join("target").join("release").join("seispie-wg")
+    workspace_root().join("target").join("release").join("seiswg")
 }
 
 fn fixture_dir(example: &str) -> PathBuf {
@@ -83,7 +83,7 @@ fn run_solver(config_path: &Path) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         panic!(
-            "seispie-wg exited with {}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            "seiswg exited with {}\nSTDOUT:\n{}\nSTDERR:\n{}",
             output.status, stdout, stderr
         );
     }

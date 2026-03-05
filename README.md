@@ -1,8 +1,8 @@
-# seispie-wg
+# seiswg
 
 2-D finite-difference seismic solver — **Rust + WebGPU** backend.
 
-This is a GPU-accelerated re-implementation of the Python/CUDA `seispie` solver.
+This is a GPU-accelerated re-implementation of the Python/CUDA [seispie](https://github.com/icui/seispie) solver.
 Every compute kernel runs as a WGSL compute shader via [wgpu](https://github.com/gfx-rs/wgpu),
 which targets **Vulkan, Metal, and DX12** from a single code-base.
 
@@ -11,7 +11,7 @@ which targets **Vulkan, Metal, and DX12** from a single code-base.
 ## Project layout
 
 ```
-wg/
+seiswg/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs        Entry point – parse CLI args, dispatch workflow
@@ -30,18 +30,17 @@ wg/
 
 ```bash
 # requires Rust ≥ 1.75 and a Vulkan / Metal / DX12 capable GPU
-cd wg
 cargo build --release
 ```
 
-The binary is written to `target/release/seispie-wg`.
+The binary is written to `target/release/seiswg`.
 
 ---
 
 ## Usage
 
 ```
-seispie-wg <config.ini>
+seiswg <config.ini>
 ```
 
 `config.ini` uses the same INI format as the Python seispie configs (see
@@ -50,7 +49,7 @@ seispie-wg <config.ini>
 Set `RUST_LOG=seispie_wg=info` to suppress verbose wgpu internal messages:
 
 ```bash
-RUST_LOG=seispie_wg=info seispie-wg <config.ini>
+RUST_LOG=seispie_wg=info seiswg <config.ini>
 ```
 
 ### Supported workflows
@@ -58,7 +57,7 @@ RUST_LOG=seispie_wg=info seispie-wg <config.ini>
 | `[workflow] mode` | Status |
 |---|---|
 | `forward` | ✅ implemented |
-| `adjoint` | planned |
+| `adjoint` | ✅ implemented |
 | `inversion` | planned |
 
 ---
@@ -183,7 +182,7 @@ Small homogeneous model (200 × 200 grid, 1 source, 25 receivers).
 python examples/forward/generate_model.py
 
 # 2. run
-./target/release/seispie-wg examples/forward/config.ini
+./target/release/seiswg examples/forward/config.ini
 ```
 
 Traces are written to `examples/forward/output/traces/`.
@@ -194,7 +193,7 @@ Homogeneous micropolar model (500 × 500 grid, 1 source, 7 receivers).
 
 ```bash
 python examples/spin/generate_model.py
-./target/release/seispie-wg examples/spin/config.ini
+./target/release/seiswg examples/spin/config.ini
 ```
 
 Traces include `ux`, `uz`, `ry` (total micro-rotation), and `yi` (isolated rotation).
@@ -219,12 +218,12 @@ velocity fields after each update.
 
 ## Differences from the Python/CUDA version
 
-| Feature | Python (`seispie`) | Rust (`seispie-wg`) |
+| Feature | Python (`seispie`) | Rust (`seiswg`) |
 |---|---|---|
 | Runtime | CUDA (Numba) | WebGPU (wgpu / Vulkan / Metal) |
 | Language | Python 3 | Rust 2021 |
 | MPI | yes | not yet |
-| Adjoint / inversion | yes | planned |
+| Adjoint / inversion | yes | yes |
 | Workflow config | identical INI format | identical INI format |
 | Model file format | identical `.bin` format | identical `.bin` format |
 | Trace output | raw float32 `.npy` | NumPy v1.0 `.npy` + raw float32 |
